@@ -259,7 +259,7 @@ async def send_sessions_log(message: types.Message):
         await message.answer("ℹ️ Нет сохранённых сессий.")
         return
 
-    await message.answer(f"🔍 Проверка {len(sessions)} сессий, это может занять несколько секунд...")
+    await message.answer(f"🔍 Проверяю {len(sessions)} сессий, это может занять несколько секунд...")
 
     results = []
     for session_doc in sessions:
@@ -273,7 +273,10 @@ async def send_sessions_log(message: types.Message):
         try:
             await client.connect()
             is_auth = await client.is_user_authorized()
-            if is_auth:
+            if not is_auth:
+                status = f"📱 {phone} — ❌ Сессия невалидна (не авторизован)"
+            else:
+                # Дополнительная проверка — получить профиль пользователя
                 me = await client.get_me()
                 has_premium = getattr(me, "premium", False)
                 restriction = getattr(me, "restriction_reason", [])
@@ -285,16 +288,16 @@ async def send_sessions_log(message: types.Message):
                     f"🌍 {country or 'N/A'}\n"
                     f"🛡 Spam Block: {'❌ Да' if is_spam_blocked else '✅ Нет'}\n"
                     f"💎 Premium: {'✅ Да' if has_premium else '❌ Нет'}\n"
-                    f"✅ Сессия валидна"
+                    f"✅ Сессия валидна и активна"
                 )
-            else:
-                status = f"📱 {phone} — ❌ Сессия не валидна"
         except Exception as e:
             status = f"📱 {phone} — ❌ Ошибка проверки: {e}"
         finally:
             await client.disconnect()
+
         results.append(status)
 
+    # Отправляем результат по частям, если слишком длинно
     chunk_size = 4000
     msg = ""
     for res in results:
@@ -304,6 +307,7 @@ async def send_sessions_log(message: types.Message):
         msg += res + "\n\n"
     if msg:
         await message.answer(msg)
+
 
 @dp.message_handler(commands=['delog'])
 async def delete_logs(message: types.Message):
