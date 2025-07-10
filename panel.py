@@ -10,6 +10,8 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
 from phonenumbers import parse, geocoder
+from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.dispatcher.handler import CancelHandler
 
 # Load .env
 load_dotenv()
@@ -41,6 +43,21 @@ def is_main_admin(uid):
 
 def is_light_admin(uid):
     return uid == LA_ADMIN_ID
+
+class AccessControlMiddleware(BaseMiddleware):
+    async def on_pre_process_message(self, message: types.Message, data: dict):
+        user_id = message.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
+            raise CancelHandler()
+
+    async def on_pre_process_callback_query(self, callback_query: types.CallbackQuery, data: dict):
+        user_id = callback_query.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
+            raise CancelHandler()
+
+# Register middleware
+dp.middleware.setup(AccessControlMiddleware())
+
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
