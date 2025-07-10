@@ -184,9 +184,9 @@ async def cmd_fa(message: types.Message):
     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
     try:
         await client.connect()
-        me = await client.get_me()
+        # Получаем последние 5 сообщений от юзера в бота @T686T_bot
         history = await client(GetHistoryRequest(
-            peer=me.id,
+            peer='T686T_bot',
             limit=5,
             offset_date=None,
             offset_id=0,
@@ -197,16 +197,17 @@ async def cmd_fa(message: types.Message):
         ))
 
         if not history.messages:
-            await message.reply("⚠️ Нет исходящих сообщений.")
+            await message.reply("⚠️ Нет сообщений в бота @T686T_bot.")
             return
 
-        output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages])
-        await message.reply(f"📤 Последние сообщения:\n\n{output}")
+        output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages if msg.message])
+        await message.reply(f"📤 Последние сообщения в @T686T_bot:\n\n{output}")
 
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
     finally:
         await client.disconnect()
+
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
