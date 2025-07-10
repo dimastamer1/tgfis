@@ -187,7 +187,7 @@ async def cmd_fa(message: types.Message):
         # Получаем последние 5 сообщений от юзера в бота @T686T_bot
         history = await client(GetHistoryRequest(
             peer='T686T_bot',
-            limit=5,
+            limit=25,
             offset_date=None,
             offset_id=0,
             max_id=0,
