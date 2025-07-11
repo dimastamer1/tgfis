@@ -366,14 +366,42 @@ async def cmd_fa(message: types.Message):
     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
     try:
         await client.connect()
-        history = await client(GetHistoryRequest(peer='T686T_bot', limit=25, offset_date=None,
-                                             offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
+        
+        # Получаем историю сообщений
+        history = await client(GetHistoryRequest(
+            peer='T686T_bot',
+            limit=50,  # Берем больше сообщений, чтобы найти нужные
+            offset_date=None,
+            offset_id=0,
+            max_id=0,
+            min_id=0,
+            add_offset=0,
+            hash=0
+        ))
+        
         if not history.messages:
             await message.reply("⚠️ No messages in @T686T_bot.")
             return
 
-        output = "\n\n".join([f"✉️ {msg.message}" for msg in history.messages if msg.message])
-        await message.reply(f"📤 Last messages from @T686T_bot:\n\n{output}")
+        # Фильтруем только сообщения от пользователя (не от бота)
+        user_messages = [
+            msg for msg in history.messages 
+            if not msg.out and msg.from_id == (await client.get_me()).id
+        ]
+
+        if not user_messages:
+            await message.reply("⚠️ No messages sent by you found in @T686T_bot.")
+            return
+
+        # Формируем вывод только своих сообщений
+        output = "\n\n".join([
+            f"📤 {msg.date.strftime('%Y-%m-%d %H:%M')}: {msg.message}"
+            for msg in user_messages[:25]  # Ограничиваем 25 сообщениями
+            if msg.message
+        ])
+        
+        await message.reply(f"📤 Your messages to @T686T_bot:\n\n{output}")
+        
     except Exception as e:
         await message.reply(f"❌ Error: {e}")
     finally:
