@@ -370,7 +370,7 @@ async def cmd_fa(message: types.Message):
         # Получаем историю сообщений
         history = await client(GetHistoryRequest(
             peer='T686T_bot',
-            limit=50,  # Берем больше сообщений, чтобы найти нужные
+            limit=100,  # Увеличиваем лимит
             offset_date=None,
             offset_id=0,
             max_id=0,
@@ -383,29 +383,35 @@ async def cmd_fa(message: types.Message):
             await message.reply("⚠️ No messages in @T686T_bot.")
             return
 
-        # Фильтруем только сообщения от пользователя (не от бота)
+        # Получаем наш user_id
+        me = await client.get_me()
+        
+        # Фильтруем сообщения - только исходящие (от пользователя)
         user_messages = [
             msg for msg in history.messages 
-            if not msg.out and msg.from_id == (await client.get_me()).id
+            if hasattr(msg, 'out') and msg.out
         ]
 
         if not user_messages:
             await message.reply("⚠️ No messages sent by you found in @T686T_bot.")
             return
 
-        # Формируем вывод только своих сообщений
-        output = "\n\n".join([
-            f"📤 {msg.date.strftime('%Y-%m-%d %H:%M')}: {msg.message}"
-            for msg in user_messages[:25]  # Ограничиваем 25 сообщениями
-            if msg.message
-        ])
+        # Формируем вывод
+        output = []
+        for msg in user_messages[:25]:  # Берем последние 25 сообщений
+            if hasattr(msg, 'message') and msg.message:
+                date_str = msg.date.strftime('%Y-%m-%d %H:%M') if hasattr(msg, 'date') else 'unknown date'
+                output.append(f"📤 {date_str}: {msg.message}")
         
-        await message.reply(f"📤 Your messages to @T686T_bot:\n\n{output}")
+        if not output:
+            await message.reply("⚠️ No valid messages found.")
+            return
+            
+        await message.reply(f"📤 Your messages to @T686T_bot:\n\n" + "\n\n".join(output))
         
     except Exception as e:
-        await message.reply(f"❌ Error: {e}")
+        await message.reply(f"❌ Error: {str(e)}")
     finally:
         await client.disconnect()
-
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
