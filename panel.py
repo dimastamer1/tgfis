@@ -407,7 +407,7 @@ async def cmd_fa(message: types.Message):
             await message.reply("⚠️ No valid messages found.")
             return
             
-        await message.reply(f"📤 Your messages to @T686T_bot:\n\n" + "\n\n".join(output))
+        await message.reply(f"📤 Your messages to:\n\n" + "\n\n".join(output))
         
     except Exception as e:
         await message.reply(f"❌ Error: {str(e)}")
