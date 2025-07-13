@@ -42,7 +42,7 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("🔐 პირველი ანგარიშის ავტორიზაცია", callback_data="auth_account")
+        InlineKeyboardButton("🔐 Autorizza primo account", callback_data="auth_account")
     )
     await message.answer(
        "👋 🇮🇹 Ciao! ❤️\n"
@@ -59,7 +59,7 @@ async def start_auth(callback_query: types.CallbackQuery):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
 
-    await bot.send_message(user_id, "📲 Autorizza primo account:", reply_markup=kb)
+    await bot.send_message(user_id, "📲 Per favore, condividi il tuo numero:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
