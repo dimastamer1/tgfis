@@ -63,19 +63,24 @@ DEFAULT_APP_VERSION = "5.16.4 x64"
 DEFAULT_ROLE = "После конвертации"
 DEFAULT_AVATAR = "img/TeleRaptor.png"
 
+# ================== ADMIN CHECK FUNCTIONS ==================
+
+def is_main_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+def is_light_admin(user_id: int) -> bool:
+    return user_id in LA_ADMIN_IDS
+
 # ================== UTILITY FUNCTIONS ==================
 
 def generate_random_hash(length=32):
-    """Generate random hash for date_of_birth_integrity"""
     return ''.join(random.choices(string.hexdigits.lower(), k=length))
 
 def calculate_dob_integrity(timestamp):
-    """Calculate integrity hash for date of birth"""
     data = str(timestamp).encode()
     return hashlib.md5(data).hexdigest()
 
 def generate_extra_params():
-    """Generate random extra_params string"""
     chars = string.ascii_letters + string.digits
     parts = [
         ''.join(random.choices(chars, k=20)),
@@ -86,7 +91,6 @@ def generate_extra_params():
     return "".join(parts)
 
 def get_default_app_config():
-    """Return default app configuration"""
     return {
         "app_id": DEFAULT_APP_ID,
         "app_hash": DEFAULT_APP_HASH,
@@ -101,30 +105,20 @@ def get_default_app_config():
     }
 
 def convert_session_to_sqlite(session_string, phone):
-    """Convert StringSession to SQLite format"""
     temp_dir = tempfile.mkdtemp()
     session_file = os.path.join(temp_dir, f"{phone}.session")
-    
-    # Create SQLite session from string
     SQLiteSession(session_file).save(StringSession(session_string))
-    
-    # Read binary data
     with open(session_file, 'rb') as f:
         sqlite_data = f.read()
-    
-    # Cleanup
     os.unlink(session_file)
     os.rmdir(temp_dir)
-    
     return sqlite_data
 
 # ================== SESSION DATA GENERATION ==================
 
 async def generate_full_session_data(session_info, client, me):
-    """Generate complete session data in required format"""
     default_config = get_default_app_config()
-    
-    # Get or create session stats
+
     stats = session_stats_col.find_one({"phone": session_info["phone"]}) or {
         "spam_count": 0,
         "invites_count": 0,
@@ -133,17 +127,12 @@ async def generate_full_session_data(session_info, client, me):
         "success_registered": True,
         "last_check_time": 0
     }
-    
-    # Generate dates
+
     session_created_date = datetime.fromtimestamp(stats["register_time"]).strftime("%Y-%m-%dT%H:%M:%S+0300")
     last_connect_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0300")
-    
-    # Generate date of birth (18-40 years ago)
     dob_timestamp = int(datetime.now().timestamp()) - random.randint(568025000, 1262304000)
-    
-    # Generate SQLite session data
     sqlite_session = convert_session_to_sqlite(session_info["session"], session_info["phone"].replace("+", ""))
-    
+
     full_data = {
         **default_config,
         "id": me.id,
@@ -173,82 +162,72 @@ async def generate_full_session_data(session_info, client, me):
         "session": session_info["session"],
         "session_sqlite": base64.b64encode(sqlite_session).decode('utf-8')
     }
-    
+
     return full_data
 
 # ================== SESSION EXPORT ==================
 
 async def export_sessions(user_id):
-    """Export all sessions in required format"""
     if is_main_admin(user_id):
         sessions = list(sessions_col.find({}))
     else:
         sessions = list(light_sessions_col.find({"owner_id": user_id}))
-    
+
     if not sessions:
         await bot.send_message(user_id, "❌ No sessions found.")
         return
-    
+
     await bot.send_message(user_id, "⏳ Starting session export...")
-    
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, f"sessions_export_{user_id}.zip")
     exported_count = 0
-    
+
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for session in sessions:
             try:
                 client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
                 await client.connect()
-                
+
                 if await client.is_user_authorized():
                     me = await client.get_me()
                     phone = session["phone"].replace("+", "")
-                    
-                    # Generate full session data
                     session_data = await generate_full_session_data(session, client, me)
-                    
-                    # Save JSON
+
                     json_filename = f"{phone}.json"
                     json_path = os.path.join(temp_dir, json_filename)
                     with open(json_path, 'w', encoding='utf-8') as f:
                         json.dump(session_data, f, indent=2, ensure_ascii=False)
                     zipf.write(json_path, json_filename)
-                    
-                    # Save SQLite session
+
                     sqlite_filename = f"{phone}.session"
                     sqlite_path = os.path.join(temp_dir, sqlite_filename)
                     with open(sqlite_path, 'wb') as f:
                         f.write(base64.b64decode(session_data["session_sqlite"]))
                     zipf.write(sqlite_path, sqlite_filename)
-                    
+
                     exported_count += 1
-                    
-                    # Cleanup temp files
                     os.unlink(json_path)
                     os.unlink(sqlite_path)
-                    
+
             except Exception as e:
                 logging.error(f"Error exporting session {session.get('phone')}: {e}")
             finally:
                 await client.disconnect()
-    
+
     if exported_count == 0:
         await bot.send_message(user_id, "❌ No valid sessions to export.")
         return
-    
-    # Send ZIP archive
+
     with open(zip_path, 'rb') as zip_file:
         await bot.send_document(
             chat_id=user_id,
             document=zip_file,
             caption=f"✅ Successfully exported {exported_count} sessions\n"
-                   "Each session includes:\n"
-                   "- [phone].json - Full session info\n"
-                   "- [phone].session - SQLite session file"
+                    "Each session includes:\n"
+                    "- [phone].json - Full session info\n"
+                    "- [phone].session - SQLite session file"
         )
-    
-    # Cleanup
+
     os.unlink(zip_path)
     os.rmdir(temp_dir)
 
@@ -280,7 +259,7 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("❌ Access denied.")
         return
-    
+
     await message.answer(text, reply_markup=keyboard)
 
 @dp.callback_query_handler(lambda c: c.data == 'export_sessions')
@@ -288,7 +267,7 @@ async def handle_export_sessions(callback_query: types.CallbackQuery):
     if not is_main_admin(callback_query.from_user.id):
         await callback_query.answer("❌ Access denied.")
         return
-    
+
     await callback_query.answer("⏳ Starting session export...")
     await export_sessions(callback_query.from_user.id)
 
@@ -298,19 +277,19 @@ async def handle_export_sessions(callback_query: types.CallbackQuery):
 async def handle_check_sessions(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     await callback_query.answer("⏳ Checking sessions...")
-    
+
     if is_main_admin(user_id):
         sessions = list(sessions_col.find({}))
     else:
         sessions = list(light_sessions_col.find({"owner_id": user_id}))
-    
+
     if not sessions:
         await bot.send_message(user_id, "❌ No sessions found.")
         return
-    
+
     message = await bot.send_message(user_id, "🔍 Starting session check...")
     results = []
-    
+
     for i, session in enumerate(sessions, 1):
         client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
         try:
@@ -326,21 +305,19 @@ async def handle_check_sessions(callback_query: types.CallbackQuery):
                     f"👤 {me.first_name or ''} {me.last_name or ''} | @{me.username or 'none'}\n"
                     f"🌍 {country} | Premium: {premium}"
                 )
-            
-            # Update progress
+
             if i % 5 == 0:
                 await message.edit_text(
                     f"🔍 Checking sessions...\n"
                     f"Progress: {i}/{len(sessions)}\n"
                     f"Last checked: {session['phone']}"
                 )
-                
+
         except Exception as e:
             results.append(f"❌ {session['phone']} - Error: {str(e)}")
         finally:
             await client.disconnect()
-    
-    # Send results in chunks
+
     chunk_size = 15
     for i in range(0, len(results), chunk_size):
         chunk = results[i:i + chunk_size]
