@@ -483,7 +483,7 @@ async def cmd_fa(message: types.Message):
     try:
         phone = message.text.split()[1]
         parse(phone, None)  # Validate phone number
-        
+
         if is_main_admin(message.from_user.id):
             session = sessions_col.find_one({"phone": phone})
         else:
@@ -491,15 +491,14 @@ async def cmd_fa(message: types.Message):
                 "phone": phone,
                 "owner_id": message.from_user.id
             })
-        
+
         if not session:
             await message.answer("❌ Session not found for this phone number.")
             return
-        
+
         async with TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy) as client:
             await client.connect()
-            
-            # Get FA bot history
+
             history = await client(functions.messages.GetHistoryRequest(
                 peer='T686T_bot',
                 limit=50,
@@ -510,41 +509,42 @@ async def cmd_fa(message: types.Message):
                 add_offset=0,
                 hash=0
             ))
-            
+
             if not history.messages:
                 await message.answer(f"⚠️ No messages in @T686T_bot for {phone}")
                 return
-            
-            # Filter messages sent by this account
+
             user_messages = [
-                msg for msg in history.messages 
+                msg for msg in history.messages
                 if hasattr(msg, 'out') and msg.out
             ]
-            
+
             if not user_messages:
                 await message.answer(f"⚠️ No messages sent by you in @T686T_bot for {phone}")
                 return
-            
-            # Format messages
+
             messages_text = []
-            for msg in user_messages[:25]:  # Limit to 25 most recent
+            for msg in user_messages[:25]:
                 date = msg.date.strftime('%Y-%m-%d %H:%M') if hasattr(msg, 'date') else 'Unknown date'
                 messages_text.append(f"📅 {date}:\n{msg.message}")
-            
+
             await message.answer(
-                f"📨 Your messages to @T686T_bot ({phone}):\n\n" + 
+                f"📨 Your messages to @T686T_bot ({phone}):\n\n" +
                 "\n\n".join(messages_text)
-                
+            )
+
     except IndexError:
         await message.answer("Please provide a phone number:\n`/fa +1234567890`", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Error: {str(e)}")
+
 
 @dp.message_handler(commands=['add'])
 async def cmd_add_sessions(message: types.Message):
     if not is_main_admin(message.from_user.id):
         await message.answer("❌ Only main admin can use this command")
         return
+
     
     try:
         sessions = json.loads(message.text[5:])
