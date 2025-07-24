@@ -423,79 +423,222 @@ async def export_sessions(user_id):
 async def cmd_start(message: types.Message):
     if is_main_admin(message.from_user.id):
         keyboard = InlineKeyboardMarkup(row_width=2).add(
-            InlineKeyboardButton("✅ Check Sessions", callback_data='validate_sessions'),
-            InlineKeyboardButton("📂 Export Sessions", callback_data='export_sessions'),
-            InlineKeyboardButton("🧹 Delete Invalid", callback_data='delete_invalid'),
-            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='get_code'),
-            InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history'),
-            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_admins')
+            InlineKeyboardButton("✅ Check Sessions", callback_data='log'),
+            InlineKeyboardButton("📂 Export Valids", callback_data='loger'),
+            InlineKeyboardButton("🧹 Delete Invalid", callback_data='validel'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
+            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_la'),
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
         await message.answer("👑 Welcome, Main Admin! Choose an action:", reply_markup=keyboard)
     elif is_light_admin(message.from_user.id):
         keyboard = InlineKeyboardMarkup(row_width=2).add(
-            InlineKeyboardButton("✅ Check My Sessions", callback_data='validate_sessions'),
-            InlineKeyboardButton("📂 Export My Sessions", callback_data='export_sessions'),
-            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='get_code'),
-            InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history')
+            InlineKeyboardButton("✅ Check My Sessions", callback_data='log'),
+            InlineKeyboardButton("📂 Export My Sessions", callback_data='loger'),
+            InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
         await message.answer("🛡 Welcome, Light Admin. Choose an action:", reply_markup=keyboard)
     else:
         await message.answer("❌ You don't have access to use this bot.")
 
-@dp.callback_query_handler(lambda c: c.data == 'validate_sessions')
-async def validate_sessions_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    await validate_sessions(callback_query.from_user.id)
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'manage_la', 'session_management'])
+async def process_callback(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
 
-@dp.callback_query_handler(lambda c: c.data == 'export_sessions')
-async def export_sessions_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    await export_sessions(callback_query.from_user.id)
+    if cmd == 'log':
+        await cmd_log_handler(callback_query.message)
+    elif cmd == 'loger':
+        if is_main_admin(uid):
+            await export_sessions(uid)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'validel':
+        if is_main_admin(uid):
+            await cmd_validel_handler(callback_query.message)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'login':
+        await bot.send_message(uid, "Send:\n`/login +1234567890`", parse_mode="Markdown")
+    elif cmd == 'fa':
+        await bot.send_message(uid, "Send:\n`/fa +1234567890`", parse_mode="Markdown")
+    elif cmd == 'manage_la':
+        if is_main_admin(uid):
+            await manage_light_admins(uid)
+        else:
+            await bot.send_message(uid, "❌ Not allowed.")
+    elif cmd == 'session_management':
+        await show_session_management(uid)
 
-@dp.callback_query_handler(lambda c: c.data == 'delete_invalid')
-async def delete_invalid_callback(callback_query: types.CallbackQuery):
-    if not is_main_admin(callback_query.from_user.id):
-        await callback_query.answer("❌ Only main admin can use this", show_alert=True)
+    await callback_query.answer()
+
+async def cmd_log_handler(message: types.Message):
+    """Command to check session status"""
+    await validate_sessions(message.from_user.id)
+
+async def cmd_validel_handler(message: types.Message):
+    """Command to validate and delete invalid sessions (admin only)"""
+    if not is_main_admin(message.from_user.id):
+        await message.answer("❌ Only main admin can use this command")
         return
+    await validate_sessions(message.from_user.id)
+
+async def show_session_management(user_id):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("📋 List My Sessions", callback_data='list_my_sessions'),
+        InlineKeyboardButton("🗑 Delete All Sessions", callback_data='delete_all_sessions'),
+        InlineKeyboardButton("🔍 Delete By Phone", callback_data='delete_by_phone'),
+        InlineKeyboardButton("🚪 Kick Other Sessions", callback_data='kick_other_sessions')
+    )
+    await bot.send_message(user_id, "🛠 Session Management:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data in ['list_my_sessions', 'delete_all_sessions', 'delete_by_phone', 'kick_other_sessions'])
+async def session_management_handler(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+    
+    if cmd == 'list_my_sessions':
+        await list_my_sessions(uid)
+    elif cmd == 'delete_all_sessions':
+        await confirm_delete_all_sessions(uid)
+    elif cmd == 'delete_by_phone':
+        await bot.send_message(uid, "Send phone number to delete session:\n`/delete_phone +1234567890`", parse_mode="Markdown")
+    elif cmd == 'kick_other_sessions':
+        await bot.send_message(uid, "Send phone number to kick other sessions:\n`/kickall +1234567890`", parse_mode="Markdown")
     
     await callback_query.answer()
-    await validate_sessions(callback_query.from_user.id)
 
-@dp.callback_query_handler(lambda c: c.data == 'get_code')
-async def get_code_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    await bot.send_message(
-        callback_query.from_user.id,
-        "Send phone number with command:\n`/login +1234567890`",
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query_handler(lambda c: c.data == 'fa_history')
-async def fa_history_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    await bot.send_message(
-        callback_query.from_user.id,
-        "Send phone number with command:\n`/fa +1234567890`",
-        parse_mode="Markdown"
-    )
-
-@dp.callback_query_handler(lambda c: c.data == 'manage_admins')
-async def manage_admins_callback(callback_query: types.CallbackQuery):
-    if not is_main_admin(callback_query.from_user.id):
-        await callback_query.answer("❌ Only main admin can use this", show_alert=True)
+async def list_my_sessions(user_id):
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await bot.send_message(user_id, "❌ No sessions found.")
         return
     
+    text = "📋 Your Sessions:\n\n"
+    for session in sessions:
+        status = "✅ Valid" if session.get("valid", True) else "❌ Invalid"
+        text += f"📱 {session['phone']} - {status}\n"
+    
+    await bot.send_message(user_id, text)
+
+async def confirm_delete_all_sessions(user_id):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("Yes, delete all", callback_data='confirm_delete_all'),
+        InlineKeyboardButton("Cancel", callback_data='cancel_delete_all')
+    )
+    await bot.send_message(user_id, "⚠️ Are you sure you want to delete ALL your sessions?", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data in ['confirm_delete_all', 'cancel_delete_all'])
+async def delete_all_sessions_handler(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+    
+    if cmd == 'confirm_delete_all':
+        if is_main_admin(uid):
+            result = sessions_col.delete_many({})
+        else:
+            result = light_sessions_col.delete_many({"owner_id": uid})
+        await bot.send_message(uid, f"🗑 Deleted {result.deleted_count} sessions.")
+    else:
+        await bot.send_message(uid, "❌ Cancelled.")
+    
     await callback_query.answer()
-    keyboard = InlineKeyboardMarkup(row_width=2).add(
+
+@dp.message_handler(commands=['delete_phone'])
+async def delete_session_by_phone(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    phone = message.get_args().strip()
+    if not phone.startswith('+'):
+        await message.reply("❗️ Use format: /delete_phone +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        result = sessions_col.delete_one({"phone": phone})
+    else:
+        result = light_sessions_col.delete_one({"phone": phone, "owner_id": message.from_user.id})
+    
+    if result.deleted_count > 0:
+        await message.reply(f"✅ Session with phone {phone} deleted.")
+    else:
+        await message.reply("❌ Session not found.")
+
+async def manage_light_admins(admin_id):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
         InlineKeyboardButton("➕ Add Light Admin", callback_data='add_light_admin'),
         InlineKeyboardButton("➖ Remove Light Admin", callback_data='remove_light_admin'),
         InlineKeyboardButton("📋 List Light Admins", callback_data='list_light_admins')
     )
-    await bot.send_message(
-        callback_query.from_user.id,
-        "👥 Light Admins Management:",
-        reply_markup=keyboard
-    )
+    await bot.send_message(admin_id, "👥 Light Admins Management:", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data in ['add_light_admin', 'remove_light_admin', 'list_light_admins'])
+async def light_admin_management(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    uid = callback_query.from_user.id
+    
+    if not is_main_admin(uid):
+        await bot.send_message(uid, "❌ Not allowed.")
+        return
+    
+    if cmd == 'add_light_admin':
+        await bot.send_message(uid, "Send user ID to add as light admin:\n`/add_la 123456789`", parse_mode="Markdown")
+    elif cmd == 'remove_light_admin':
+        await bot.send_message(uid, "Send user ID to remove from light admins:\n`/remove_la 123456789`", parse_mode="Markdown")
+    elif cmd == 'list_light_admins':
+        admins = list(light_admins_col.find({}))
+        if not admins:
+            await bot.send_message(uid, "No light admins added yet.")
+            return
+        
+        text = "📋 Light Admins List:\n\n"
+        text += "\n".join([f"👤 {admin['user_id']} - @{admin.get('username', 'unknown')}" for admin in admins])
+        await bot.send_message(uid, text)
+
+@dp.message_handler(commands=['add_la'])
+async def add_light_admin_cmd(message: types.Message):
+    if not is_main_admin(message.from_user.id):
+        return
+    
+    try:
+        user_id = int(message.get_args().strip())
+        user = await bot.get_chat(user_id)
+        
+        light_admins_col.update_one(
+            {"user_id": user_id},
+            {"$set": {"user_id": user_id, "username": user.username}},
+            upsert=True
+        )
+        await message.reply(f"✅ Added light admin: {user_id} (@{user.username})")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+
+@dp.message_handler(commands=['remove_la'])
+async def remove_light_admin_cmd(message: types.Message):
+    if not is_main_admin(message.from_user.id):
+        return
+    
+    try:
+        user_id = int(message.get_args().strip())
+        result = light_admins_col.delete_one({"user_id": user_id})
+        
+        if result.deleted_count > 0:
+            light_sessions_col.delete_many({"owner_id": user_id})
+            await message.reply(f"✅ Removed light admin and their sessions: {user_id}")
+        else:
+            await message.reply("❌ Light admin not found.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
 
 @dp.message_handler(commands=['login'])
 async def cmd_login(message: types.Message):
@@ -603,19 +746,6 @@ async def cmd_fa(message: types.Message):
         await message.answer("Please provide a phone number:\n`/fa +1234567890`", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Error: {str(e)}")
-
-@dp.message_handler(commands=['log'])
-async def cmd_log(message: types.Message):
-    """Command to check session status"""
-    await validate_sessions(message.from_user.id)
-
-@dp.message_handler(commands=['validel'])
-async def cmd_validel(message: types.Message):
-    """Command to validate and delete invalid sessions (admin only)"""
-    if not is_main_admin(message.from_user.id):
-        await message.answer("❌ Only main admin can use this command")
-        return
-    await validate_sessions(message.from_user.id)
 
 @dp.message_handler(commands=['kickall'])
 async def cmd_kickall(message: types.Message):
