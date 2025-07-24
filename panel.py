@@ -179,78 +179,67 @@ async def generate_full_session_data(session_info, client, me):
 # ================== SESSION EXPORT ==================
 
 async def export_sessions(user_id):
-    """Export all sessions in required format"""
-    if is_main_admin(user_id):
-        sessions = list(sessions_col.find({}))
-    else:
-        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    # Загрузим все сессии из двух коллекций
+    sessions = list(sessions_col.find({})) + list(light_sessions_col.find({}))
     
     if not sessions:
         await bot.send_message(user_id, "❌ No sessions found.")
         return
-    
+
     await bot.send_message(user_id, "⏳ Starting session export...")
-    
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, f"sessions_export_{user_id}.zip")
     exported_count = 0
-    
+
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for session in sessions:
             try:
                 client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
                 await client.connect()
-                
+
                 if await client.is_user_authorized():
                     me = await client.get_me()
                     phone = session["phone"].replace("+", "")
-                    
-                    # Generate full session data
                     session_data = await generate_full_session_data(session, client, me)
-                    
-                    # Save JSON
+
                     json_filename = f"{phone}.json"
                     json_path = os.path.join(temp_dir, json_filename)
                     with open(json_path, 'w', encoding='utf-8') as f:
                         json.dump(session_data, f, indent=2, ensure_ascii=False)
                     zipf.write(json_path, json_filename)
-                    
-                    # Save SQLite session
+
                     sqlite_filename = f"{phone}.session"
                     sqlite_path = os.path.join(temp_dir, sqlite_filename)
                     with open(sqlite_path, 'wb') as f:
                         f.write(base64.b64decode(session_data["session_sqlite"]))
                     zipf.write(sqlite_path, sqlite_filename)
-                    
+
                     exported_count += 1
-                    
-                    # Cleanup temp files
                     os.unlink(json_path)
                     os.unlink(sqlite_path)
-                    
+
             except Exception as e:
                 logging.error(f"Error exporting session {session.get('phone')}: {e}")
             finally:
                 await client.disconnect()
-    
+
     if exported_count == 0:
         await bot.send_message(user_id, "❌ No valid sessions to export.")
         return
-    
-    # Send ZIP archive
+
     with open(zip_path, 'rb') as zip_file:
         await bot.send_document(
             chat_id=user_id,
             document=zip_file,
             caption=f"✅ Successfully exported {exported_count} sessions\n"
-                   "Each session includes:\n"
-                   "- [phone].json - Full session info\n"
-                   "- [phone].session - SQLite session file"
+                    "Each session includes:\n"
+                    "- [phone].json - Full session info\n"
+                    "- [phone].session - SQLite session file"
         )
-    
-    # Cleanup
+
     os.unlink(zip_path)
     os.rmdir(temp_dir)
+
 
 # ================== COMMAND HANDLERS ==================
 
@@ -298,19 +287,17 @@ async def handle_export_sessions(callback_query: types.CallbackQuery):
 async def handle_check_sessions(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     await callback_query.answer("⏳ Checking sessions...")
-    
-    if is_main_admin(user_id):
-        sessions = list(sessions_col.find({}))
-    else:
-        sessions = list(light_sessions_col.find({"owner_id": user_id}))
-    
+
+    # Собираем ВСЕ сессии
+    sessions = list(sessions_col.find({})) + list(light_sessions_col.find({}))
+
     if not sessions:
         await bot.send_message(user_id, "❌ No sessions found.")
         return
-    
+
     message = await bot.send_message(user_id, "🔍 Starting session check...")
     results = []
-    
+
     for i, session in enumerate(sessions, 1):
         client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
         try:
@@ -326,21 +313,19 @@ async def handle_check_sessions(callback_query: types.CallbackQuery):
                     f"👤 {me.first_name or ''} {me.last_name or ''} | @{me.username or 'none'}\n"
                     f"🌍 {country} | Premium: {premium}"
                 )
-            
-            # Update progress
+
             if i % 5 == 0:
                 await message.edit_text(
                     f"🔍 Checking sessions...\n"
                     f"Progress: {i}/{len(sessions)}\n"
                     f"Last checked: {session['phone']}"
                 )
-                
+
         except Exception as e:
             results.append(f"❌ {session['phone']} - Error: {str(e)}")
         finally:
             await client.disconnect()
-    
-    # Send results in chunks
+
     chunk_size = 15
     for i in range(0, len(results), chunk_size):
         chunk = results[i:i + chunk_size]
@@ -348,6 +333,7 @@ async def handle_check_sessions(callback_query: types.CallbackQuery):
             user_id,
             "📋 Session check results:\n\n" + "\n\n".join(chunk)
         )
+
 
 # ================== MAIN EXECUTION ==================
 
