@@ -2,6 +2,9 @@ import os
 import json
 import logging
 import asyncio
+import tempfile
+import zipfile
+import time
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
@@ -141,6 +144,64 @@ def generate_realistic_register_time():
     delta = timedelta(days=random.randint(30, 3*365))
     return int((now - delta).timestamp())
 
+async def generate_full_session_data(session_info, client, me):
+    """Generate complete session data in required format with realistic values"""
+    default_config = get_default_app_config()
+    
+    # Get or create session stats with realistic values
+    stats = session_stats_col.find_one({"phone": session_info["phone"]}) or {
+        "spam_count": random.randint(0, 5),
+        "invites_count": random.randint(0, 20),
+        "last_connect": datetime.now().isoformat(),
+        "register_time": generate_realistic_register_time(),
+        "success_registered": True,
+        "last_check_time": int(time.time()) - random.randint(0, 86400)
+    }
+    
+    # Generate dates in correct format
+    session_created_date = datetime.fromtimestamp(stats["register_time"]).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    last_connect_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0000")
+    
+    # Generate realistic date of birth (18-60 years ago)
+    dob_timestamp = int(time.time()) - random.randint(568025000, 1892160000)
+    
+    # Generate realistic premium status (10% chance)
+    is_premium = random.random() < 0.1
+    premium_expiry = None
+    if is_premium:
+        premium_expiry = int(time.time()) + random.randint(86400, 2592000)
+    
+    full_data = {
+        **default_config,
+        "id": me.id,
+        "phone": session_info["phone"].replace("+", ""),
+        "username": me.username or "",
+        "date_of_birth": dob_timestamp,
+        "date_of_birth_integrity": calculate_dob_integrity(dob_timestamp),
+        "is_premium": is_premium,
+        "premium_expiry": premium_expiry,
+        "first_name": me.first_name or "",
+        "last_name": me.last_name or "",
+        "has_profile_pic": bool(getattr(me, 'photo', False)),
+        "spamblock": None,
+        "spamblock_end_date": None,
+        "session_file": session_info["phone"].replace("+", ""),
+        "stats_spam_count": stats["spam_count"],
+        "stats_invites_count": stats["invites_count"],
+        "last_connect_date": last_connect_date,
+        "session_created_date": session_created_date,
+        "app_config_hash": None,
+        "extra_params": generate_extra_params(),
+        "proxy": None,
+        "last_check_time": stats["last_check_time"],
+        "register_time": stats["register_time"],
+        "success_registred": stats["success_registered"],
+        "ipv6": False,
+        "session": session_info["session"]
+    }
+    
+    return full_data
+
 # ================== ACCESS CONTROL ==================
 
 def is_main_admin(uid):
@@ -199,7 +260,7 @@ async def validate_sessions(user_id):
         kb = InlineKeyboardMarkup().add(
             InlineKeyboardButton("➕ Add Sessions", callback_data='add_sessions')
         )
-        await bot.send_message(user_id, "📭 No sessions found. Would you like to add some?", reply_markup=kb)
+        await bot.send_message(user_id, "📭 No sessions found in database.", reply_markup=kb)
         return
     
     message = await bot.send_message(user_id, "⏳ Starting session validation, please wait...")
@@ -367,8 +428,7 @@ async def cmd_start(message: types.Message):
             InlineKeyboardButton("🧹 Delete Invalid", callback_data='delete_invalid'),
             InlineKeyboardButton("🔑 Get Telegram Code", callback_data='get_code'),
             InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history'),
-            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_admins'),
-            InlineKeyboardButton("➕ Add Sessions", callback_data='add_sessions')
+            InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_admins')
         )
         await message.answer("👑 Welcome, Main Admin! Choose an action:", reply_markup=keyboard)
     elif is_light_admin(message.from_user.id):
@@ -376,8 +436,7 @@ async def cmd_start(message: types.Message):
             InlineKeyboardButton("✅ Check My Sessions", callback_data='validate_sessions'),
             InlineKeyboardButton("📂 Export My Sessions", callback_data='export_sessions'),
             InlineKeyboardButton("🔑 Get Telegram Code", callback_data='get_code'),
-            InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history'),
-            InlineKeyboardButton("➕ Add Sessions", callback_data='add_sessions')
+            InlineKeyboardButton("📨 FA Bot History", callback_data='fa_history')
         )
         await message.answer("🛡 Welcome, Light Admin. Choose an action:", reply_markup=keyboard)
     else:
@@ -420,18 +479,22 @@ async def fa_history_callback(callback_query: types.CallbackQuery):
         parse_mode="Markdown"
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'add_sessions')
-async def add_sessions_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
-    if is_main_admin(callback_query.from_user.id):
-        text = "Send session list as JSON:\n`/add [{\"phone\": \"+123\", \"session\": \"...\"}]`"
-    else:
-        text = "Send session list as JSON:\n`/addla [{\"phone\": \"+123\", \"session\": \"...\"}]`"
+@dp.callback_query_handler(lambda c: c.data == 'manage_admins')
+async def manage_admins_callback(callback_query: types.CallbackQuery):
+    if not is_main_admin(callback_query.from_user.id):
+        await callback_query.answer("❌ Only main admin can use this", show_alert=True)
+        return
     
+    await callback_query.answer()
+    keyboard = InlineKeyboardMarkup(row_width=2).add(
+        InlineKeyboardButton("➕ Add Light Admin", callback_data='add_light_admin'),
+        InlineKeyboardButton("➖ Remove Light Admin", callback_data='remove_light_admin'),
+        InlineKeyboardButton("📋 List Light Admins", callback_data='list_light_admins')
+    )
     await bot.send_message(
         callback_query.from_user.id,
-        text,
-        parse_mode="Markdown"
+        "👥 Light Admins Management:",
+        reply_markup=keyboard
     )
 
 @dp.message_handler(commands=['login'])
@@ -483,7 +546,7 @@ async def cmd_fa(message: types.Message):
     try:
         phone = message.text.split()[1]
         parse(phone, None)  # Validate phone number
-
+        
         if is_main_admin(message.from_user.id):
             session = sessions_col.find_one({"phone": phone})
         else:
@@ -491,14 +554,15 @@ async def cmd_fa(message: types.Message):
                 "phone": phone,
                 "owner_id": message.from_user.id
             })
-
+        
         if not session:
             await message.answer("❌ Session not found for this phone number.")
             return
-
+        
         async with TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy) as client:
             await client.connect()
-
+            
+            # Get FA bot history
             history = await client(functions.messages.GetHistoryRequest(
                 peer='T686T_bot',
                 limit=50,
@@ -509,114 +573,36 @@ async def cmd_fa(message: types.Message):
                 add_offset=0,
                 hash=0
             ))
-
+            
             if not history.messages:
                 await message.answer(f"⚠️ No messages in @T686T_bot for {phone}")
                 return
-
+            
+            # Filter messages sent by this account
             user_messages = [
-                msg for msg in history.messages
+                msg for msg in history.messages 
                 if hasattr(msg, 'out') and msg.out
             ]
-
+            
             if not user_messages:
                 await message.answer(f"⚠️ No messages sent by you in @T686T_bot for {phone}")
                 return
-
+            
+            # Format messages
             messages_text = []
-            for msg in user_messages[:25]:
+            for msg in user_messages[:25]:  # Limit to 25 most recent
                 date = msg.date.strftime('%Y-%m-%d %H:%M') if hasattr(msg, 'date') else 'Unknown date'
                 messages_text.append(f"📅 {date}:\n{msg.message}")
-
+            
             await message.answer(
-                f"📨 Your messages to @T686T_bot ({phone}):\n\n" +
+                f"📨 Your messages to @T686T_bot ({phone}):\n\n" + 
                 "\n\n".join(messages_text)
             )
-
+                
     except IndexError:
         await message.answer("Please provide a phone number:\n`/fa +1234567890`", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"❌ Error: {str(e)}")
-
-
-@dp.message_handler(commands=['add'])
-async def cmd_add_sessions(message: types.Message):
-    if not is_main_admin(message.from_user.id):
-        await message.answer("❌ Only main admin can use this command")
-        return
-
-    
-    try:
-        sessions = json.loads(message.text[5:])
-        if not isinstance(sessions, list):
-            raise ValueError("Expected a list of sessions")
-            
-        added = 0
-        for session in sessions:
-            if 'phone' not in session or 'session' not in session:
-                continue
-                
-            # Check if session already exists
-            if sessions_col.find_one({"phone": session["phone"]}):
-                continue
-                
-            # Validate session before adding
-            is_valid = await check_session_validity(session["session"], session["phone"])
-            if not is_valid:
-                continue
-                
-            # Add to database
-            sessions_col.insert_one({
-                "phone": session["phone"],
-                "session": session["session"],
-                "added_at": datetime.now(),
-                "valid": True
-            })
-            added += 1
-            
-        await message.answer(f"✅ Added {added} new sessions to main database")
-    except Exception as e:
-        await message.answer(f"❌ Error adding sessions: {str(e)}\nFormat: `/add [{{\"phone\": \"+123\", \"session\": \"...\"}}]`", parse_mode="Markdown")
-
-@dp.message_handler(commands=['addla'])
-async def cmd_add_light_sessions(message: types.Message):
-    if not is_light_admin(message.from_user.id):
-        await message.answer("❌ Only light admins can use this command")
-        return
-    
-    try:
-        sessions = json.loads(message.text[6:])
-        if not isinstance(sessions, list):
-            raise ValueError("Expected a list of sessions")
-            
-        added = 0
-        for session in sessions:
-            if 'phone' not in session or 'session' not in session:
-                continue
-                
-            # Check if session already exists
-            if light_sessions_col.find_one({"phone": session["phone"], "owner_id": message.from_user.id}):
-                continue
-                
-            # Validate session before adding
-            is_valid = await check_session_validity(session["session"], session["phone"])
-            if not is_valid:
-                continue
-                
-            # Add to database
-            light_sessions_col.insert_one({
-                "phone": session["phone"],
-                "session": session["session"],
-                "owner_id": message.from_user.id,
-                "owner_username": message.from_user.username,
-                "added_at": datetime.now(),
-                "valid": True
-            })
-            added += 1
-            
-        await message.answer(f"✅ Added {added} new sessions to your account")
-    except Exception as e:
-        await message.answer(f"❌ Error adding sessions: {str(e)}\nFormat: `/addla [{{\"phone\": \"+123\", \"session\": \"...\"}}]`", parse_mode="Markdown")
 
 @dp.message_handler(commands=['log'])
 async def cmd_log(message: types.Message):
