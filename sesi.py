@@ -6,7 +6,7 @@ import os
 # ВСТАВЬ СЮДА ДАННЫЕ
 API_ID = 28932534  # 👉 твой API_ID от my.telegram.org
 API_HASH = "55a8ca92300de9d9c383db0b8db5a671"  # 👉 твой API_HASH
-SESSION_STRING = "1AZWarzQBuyaX0COGcjyolSE3WTGFAAwQHVRkXzSA-lnRudZNLofjJQtr8FaFWTrGiiFipuwHeYWkJMv3-uueCkhW4rTJeoZUKH_0tJoG86_ioTduUevgiUVyxZ7-6cYgLKx7jn_7TCI3JjQ_-vgKy5HQTRDjMeaeTH8i7nsdoOWmIglVsgVHn3M4MieJDBnOF2oLAzpnAXCyqchI6OClLzDKfogo5A1-7EZSKceBdsyJBt0jZKqDMurPrNCSeCSNyHOwo4-pSNfKgWhe2dODo6WJvwYJ7i1NrnH8uOASdYBjwwtgZoTS8I8L8L8nZjSIg29FeN1g8ECATcmDLOOhRd7vcaGNq7Y="  # 👉 сессия
+SESSION_STRING = "1AZWarzQBux5LLdZne0gd32NwHVlspE0hchqZa6kcEPc6tLx2kzaBnnK7Uy6IjbPMVdYXTlIbo1pi4WAFF7nPKgez9-9c_68vU0QuLYAXZeKeJ0JeW3cvgqn7Hh_4Kfhlfo1YKxyfouFEb4NuauQfvj5MkJT-QtwAYYE23ib8-M4y-mji7UMHSba23n4NNK7DyXHGwZEnYe5bLj8uha-f7GtwkCUO_PdN-GpIYG0oYInVLCz3y2yKilNoAuIkqQ0xFOZSwN3GntsLgptVxDRo7bx0vQB9iDotM8bMTuVsvdZr2ZpuNHrjz4FiCfBQ5PQDuQFw-p93Q5TKkmz1OIS38vu-z9Neta8="  # 👉 сессия
 
 async def check_session():
     try:
