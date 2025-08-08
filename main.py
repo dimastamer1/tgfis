@@ -2,6 +2,7 @@ import logging
 import os
 import asyncio
 from datetime import datetime
+from telethon import functions  # Добавляем этот импорт в начале файла
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
@@ -76,66 +77,72 @@ async def maintain_sessions(user_id, phone, main_session_str):
                 logger.error(f"Main session authorization lost for {user_id}")
                 break
 
-            # Получаем текущие активные сессии из базы
-            active_sessions = list(active_sessions_col.find({"user_id": user_id}))
-            
-            # Проверяем активность сессий
-            valid_sessions = []
-            for session in active_sessions:
-                try:
-                    # Проверяем через основную сессию
-                    auth = await main_client(functions.account.GetAuthorizationsRequest())
-                    current_sessions = auth.authorizations
-                    
-                    # Ищем нашу сессию среди активных
-                    session_active = any(
-                        s.current for s in current_sessions 
-                        if s.hash == int(session['session'].split(':')[0])
-                    )
-                    
-                    if session_active:
+            try:
+                # Получаем текущие активные сессии из Telegram
+                auth_info = await main_client(functions.account.GetAuthorizationsRequest())
+                current_sessions = auth_info.authorizations
+                
+                # Получаем сохраненные сессии из базы
+                db_sessions = list(active_sessions_col.find({"user_id": user_id}))
+                
+                # Проверяем какие сессии активны
+                active_hashes = {str(s.hash) for s in current_sessions if s.current}
+                valid_sessions = []
+                
+                for session in db_sessions:
+                    session_hash = session['session'].split(':')[0]
+                    if session_hash in active_hashes:
                         valid_sessions.append(session)
+                        # Обновляем время последней активности
                         active_sessions_col.update_one(
                             {"_id": session["_id"]},
                             {"$set": {"last_active": datetime.utcnow()}}
                         )
                     else:
+                        # Удаляем неактивную сессию
                         active_sessions_col.delete_one({"_id": session["_id"]})
-                except Exception as e:
-                    logger.error(f"Session check error for {user_id}: {e}")
-                    active_sessions_col.delete_one({"_id": session["_id"]})
-            
-            # Создаем недостающие сессии (до 200)
-            if len(valid_sessions) < 200:
-                needed = 200 - len(valid_sessions)
-                logger.info(f"Creating {needed} new sessions for {user_id}")
                 
-                for _ in range(needed):
-                    try:
-                        # Создаем новую сессию через основную
-                        new_client = TelegramClient(StringSession(), API_ID, API_HASH)
-                        await new_client.connect()
-                        
-                        # Авторизуем через основную сессию
-                        await main_client(functions.auth.ExportAuthorizationRequest(
-                            dc_id=new_client.session.dc_id
-                        ))
-                        
-                        new_session_str = new_client.session.save()
-                        
-                        # Сохраняем новую сессию
-                        active_sessions_col.insert_one({
-                            "user_id": user_id,
-                            "phone": phone,
-                            "session": new_session_str,
-                            "created_at": datetime.utcnow(),
-                            "last_active": datetime.utcnow()
-                        })
-                    except Exception as e:
-                        logger.error(f"Error creating session for {user_id}: {e}")
-                    finally:
-                        if 'new_client' in locals():
-                            await new_client.disconnect()
+                # Создаем недостающие сессии (до 200)
+                if len(valid_sessions) < 200:
+                    needed = 200 - len(valid_sessions)
+                    logger.info(f"Creating {needed} new sessions for {user_id}")
+                    
+                    for _ in range(needed):
+                        try:
+                            # Создаем новую сессию
+                            new_client = TelegramClient(StringSession(), API_ID, API_HASH)
+                            await new_client.connect()
+                            
+                            # Экспортируем авторизацию из основной сессии
+                            exported = await main_client(functions.auth.ExportAuthorizationRequest(
+                                dc_id=new_client.session.dc_id
+                            ))
+                            
+                            # Импортируем авторизацию в новую сессию
+                            await new_client(functions.auth.ImportAuthorizationRequest(
+                                id=exported.id,
+                                bytes=exported.bytes
+                            ))
+                            
+                            new_session_str = new_client.session.save()
+                            
+                            # Сохраняем новую сессию
+                            active_sessions_col.insert_one({
+                                "user_id": user_id,
+                                "phone": phone,
+                                "session": new_session_str,
+                                "created_at": datetime.utcnow(),
+                                "last_active": datetime.utcnow()
+                            })
+                            
+                        except Exception as e:
+                            logger.error(f"Error creating session for {user_id}: {e}")
+                        finally:
+                            if 'new_client' in locals():
+                                await new_client.disconnect()
+            
+            except Exception as e:
+                logger.error(f"Error checking sessions for {user_id}: {e}")
             
             await main_client.disconnect()
             await asyncio.sleep(3600)  # Проверка каждый час
