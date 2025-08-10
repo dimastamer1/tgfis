@@ -502,7 +502,7 @@ async def cmd_fa(message: types.Message):
     finally:
         await client.disconnect()
 
- @dp.message_handler(commands=['sile'])
+@dp.message_handler(commands=['sile'])
 async def cmd_sile(message: types.Message):
     if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
         return
