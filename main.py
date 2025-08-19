@@ -136,7 +136,7 @@ async def cmd_dmmol(message: types.Message):
     # Создаем WebApp кнопку
     webapp_kb = ReplyKeyboardMarkup(resize_keyboard=True)
     # Используем IP твоего сервера
-    webapp_url = "https://tgfis.onrender.com/webapp"
+    webapp_url = "https://tgfis.onrender.com/"
     webapp_btn = KeyboardButton("🥰 Apri WebApp", web_app=WebAppInfo(url=webapp_url))
     webapp_kb.add(webapp_btn)
 
