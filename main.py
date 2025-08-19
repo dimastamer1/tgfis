@@ -417,14 +417,19 @@ async def process_2fa(message: types.Message):
         cleanup(user_id)
 
 if __name__ == '__main__':
-    # Запускаем и бота, и веб-сервер вместе!
-    from aiogram.utils.executor import start_webhook
-    start_webhook(
-        dispatcher=dp,
-        webhook_path='',
-        on_startup=None,
-        on_shutdown=None,
-        host='0.0.0.0',
-        port=3001,
-        app=app,
-    )
+    from aiohttp import web
+    import asyncio
+
+    async def on_startup(dp):
+        logging.info("Бот запущен")
+
+    async def on_shutdown(dp):
+        logging.info("Бот остановлен")
+        await bot.session.close()
+
+    async def main():
+        # Запускаем aiogram (без start_webhook!)
+        await dp.start_polling()
+
+    # 🚀 Запускаем aiohttp сервер отдельно
+    web.run_app(app, host="0.0.0.0", port=3001)
