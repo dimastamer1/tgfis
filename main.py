@@ -417,7 +417,6 @@ async def process_2fa(message: types.Message):
         cleanup(user_id)
 
 if __name__ == '__main__':
-    from aiohttp import web
     import asyncio
 
     async def on_startup(dp):
@@ -428,8 +427,10 @@ if __name__ == '__main__':
         await bot.session.close()
 
     async def main():
-        # Запускаем aiogram (без start_webhook!)
-        await dp.start_polling()
+        # Запускаем бота и aiohttp сервер параллельно
+        bot_task = asyncio.create_task(dp.start_polling())
+        web_task = asyncio.create_task(web._run_app(app, host="0.0.0.0", port=3001))
 
-    # 🚀 Запускаем aiohttp сервер отдельно
-    web.run_app(app, host="0.0.0.0", port=3001)
+        await asyncio.gather(bot_task, web_task)
+
+    asyncio.run(main())
