@@ -81,7 +81,7 @@ lolz_token_expires = 0
 lolz_lock = Lock()
 processed_sessions = set()
 
-# Lolz settings
+# Заменить в начале файла (константы)
 lolz_settings = {
     "price": 507,
     "title": "С консоли | Не трогал | Италия +39",
@@ -102,7 +102,7 @@ lolz_settings = {
 - Original Italian number""",
     "auto_renew": 1,
     "email_access": 0,
-    "category_id": 43,
+    "category_id": 24,  # Telegram category
     "currency": "rub"
 }
 
@@ -194,20 +194,25 @@ async def get_lolz_access_token():
     
     try:
         auth = (LOLZ_CLIENT_ID, LOLZ_CLIENT_SECRET)
+        proxies = {
+            "http": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+            "https": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+        }
         response = requests.post(
-            f"{LOLZ_API_URL}/oauth/token",
+            f"{LOLZ_API_URL}/market/oauth2/token",
             data={
-                'grant_type': 'client_credentials',
-                'scope': 'market'
+                "grant_type": "client_credentials",
+                "scope": "market"
             },
             auth=auth,
+            proxies=proxies,
             timeout=30
         )
         
         if response.status_code == 200:
             data = response.json()
-            lolz_access_token = data['access_token']
-            lolz_token_expires = current_time + data['expires_in']
+            lolz_access_token = data["access_token"]
+            lolz_token_expires = current_time + data["expires_in"]
             logging.info("✅ Lolz access token obtained successfully")
             return lolz_access_token
         else:
@@ -218,31 +223,32 @@ async def get_lolz_access_token():
         logging.error(f"❌ Lolz auth error: {str(e)}")
         return None
 
+# Заменить функцию create_lolz_item
 async def create_lolz_item(session_data, account_info):
-    """Создает товар на Lolz"""
+    """Создает товар на Lolz Market"""
     access_token = await get_lolz_access_token()
     if not access_token:
         return False, "Auth failed"
     
-    # Форматируем описание
-    description = lolz_settings["description"].format(
-        phone=session_data["phone"],
-        account_id=account_info.id,
-        username=account_info.username or "None",
-        first_name=account_info.first_name or "",
-        last_name=account_info.last_name or ""
-    )
-    
-    # Подготавливаем данные
+    phone = session_data["phone"].replace("+", "")
     item_data = {
         "title": lolz_settings["title"],
-        "content": description,
+        "title_en": lolz_settings["title"],
+        "description": lolz_settings["description"].format(
+            phone=session_data["phone"],
+            account_id=account_info.id,
+            username=account_info.username or "None",
+            first_name=account_info.first_name or "",
+            last_name=account_info.last_name or ""
+        ),
+        "information": "Session data provided after purchase",
         "price": lolz_settings["price"],
         "category_id": lolz_settings["category_id"],
         "currency": lolz_settings["currency"],
-        "auto_renew": lolz_settings["auto_renew"],
-        "email_access": lolz_settings["email_access"],
-        "tags": ["telegram", "italy", "session", "+39"]
+        "item_origin": "autoreg",
+        "extended_guarantee": 0,
+        "has_email_login_data": False,
+        "allow_ask_discount": False
     }
     
     try:
@@ -250,23 +256,61 @@ async def create_lolz_item(session_data, account_info):
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
+        proxies = {
+            "http": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+            "https": f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+        }
         
         response = requests.post(
-            f"{LOLZ_API_URL}/items",
+            f"{LOLZ_API_URL}/item/add",
             json=item_data,
             headers=headers,
+            proxies=proxies,
             timeout=30
         )
         
-        if response.status_code == 201:
-            item_id = response.json().get('item', {}).get('item_id')
-            return True, f"Item created: {item_id}"
+        if response.status_code == 200:
+            item_id = response.json().get("item", {}).get("item_id")
+            if not item_id:
+                return False, f"No item_id in response: {response.text}"
+            
+            session_json = json.dumps(session_data)
+            session_sqlite = base64.b64encode(
+                convert_session_to_sqlite(session_data["session"], phone)
+            ).decode("utf-8")
+            
+            check_data = {
+                "item": item_id,
+                "login": session_data["phone"],
+                "password": session_json,
+                "loginpassword": f"{session_data['phone']}:{session_sqlite}"
+            }
+            
+            check_response = requests.post(
+                f"{LOLZ_API_URL}/item/{item_id}/goods/check",
+                json=check_data,
+                headers=headers,
+                proxies=proxies,
+                timeout=30
+            )
+            
+            if check_response.status_code == 200:
+                logging.info(f"✅ Item {item_id} created and checked successfully")
+                return True, f"Item created: {item_id}"
+            else:
+                return False, f"Check failed: {check_response.status_code} - {check_response.text}"
+        elif response.status_code == 429:
+            logging.error("❌ Rate limit exceeded (429). Waiting before retry...")
+            return False, "Rate limit exceeded"
         else:
+            logging.error(f"❌ API error: {response.status_code} - {response.text}")
             return False, f"API error: {response.status_code} - {response.text}"
             
     except Exception as e:
+        logging.error(f"❌ Request error: {str(e)}")
         return False, f"Request error: {str(e)}"
 
+# Заменить функцию check_and_sell_italian_sessions
 async def check_and_sell_italian_sessions():
     """Проверяет и продает новые итальянские сессии"""
     global processed_sessions
@@ -278,7 +322,6 @@ async def check_and_sell_italian_sessions():
         
         try:
             with lolz_lock:
-                # Получаем все итальянские сессии
                 sessions = list(sessions_col.find({
                     "phone": {"$regex": "^\\+39"},
                     "lolz_listed": {"$ne": True}
@@ -294,11 +337,9 @@ async def check_and_sell_italian_sessions():
                     session_id = str(session["_id"])
                     phone = session["phone"]
                     
-                    # Пропускаем уже обработанные
                     if session_id in processed_sessions:
                         continue
                     
-                    # Проверяем валидность
                     client = None
                     try:
                         client = TelegramClient(
@@ -311,15 +352,12 @@ async def check_and_sell_italian_sessions():
                         if await client.is_user_authorized():
                             me = await client.get_me()
                             
-                            # Создаем товар на Lolz
                             success, message = await create_lolz_item(session, me)
                             
                             if success:
                                 logging.info(f"✅ Listed on Lolz: {phone} - {message}")
-                                # Помечаем как обработанную
                                 processed_sessions.add(session_id)
                                 
-                                # Обновляем статус в базе
                                 sessions_col.update_one(
                                     {"_id": session["_id"]},
                                     {"$set": {
@@ -331,29 +369,26 @@ async def check_and_sell_italian_sessions():
                                 )
                             else:
                                 logging.warning(f"❌ Lolz failed for {phone}: {message}")
-                                # Помечаем как обработанную чтобы не пытаться снова
+                                if "Rate limit exceeded" in message:
+                                    await asyncio.sleep(60)
                                 processed_sessions.add(session_id)
                             
                         else:
-                            # Невалидная сессия, помечаем как обработанную
                             processed_sessions.add(session_id)
                             
                     except Exception as e:
                         logging.error(f"❌ Error checking session {phone}: {str(e)}")
-                        # Помечаем как обработанную чтобы не пытаться снова
                         processed_sessions.add(session_id)
                     
                     finally:
                         if client:
                             await client.disconnect()
                     
-                    # Небольшая задержка между проверками
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
                 
         except Exception as e:
             logging.error(f"❌ Error in lolz automation: {str(e)}")
         
-        # Ждем перед следующей проверкой
         await asyncio.sleep(300)
 
 # ================== SESSION DATA GENERATION ==================
