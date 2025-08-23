@@ -1170,11 +1170,8 @@ async def process_callback(callback_query: types.CallbackQuery):
         await show_session_management(uid)
 
 
-    elif cmd == 'lolz_menu':
-        await show_lolz_menu(uid)
-    await callback_query.answer()
-    
-@dp.callback_query_handler(lambda c: c.data and c.data.startswith('lolz_menu'))
+  
+@dp.callback_query_handler(lambda c: c.data == 'lolz_menu')
 async def lolz_menu_callback(callback_query: types.CallbackQuery):
     await cmd_lolz(callback_query.message)
     await callback_query.answer()
