@@ -4,3 +4,4 @@ __pycache__/
 sessions/
 *.pyc
 *.log
+.tt.py
