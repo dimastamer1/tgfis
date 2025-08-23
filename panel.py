@@ -83,9 +83,9 @@ processed_sessions = set()
 
 # Lolz settings
 lolz_settings = {
-    "price": 150,
-    "title": "🇮🇹 Italian Telegram Account | Fresh Session | +39",
-    "description": """✅ Fresh Italian Telegram account
+    "price": 507,
+    "title": "С консоли | Не трогал | Италия +39",
+    "description": """Не трогал, с консоли, итальянский номер +39, все чисто прозоро с рыбалка, без спама и блокировок!
 ✅ Valid session
 ✅ Phone: +39 Italy
 ✅ Ready to use
