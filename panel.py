@@ -42,7 +42,7 @@ LA_ADMIN_IDS = json.loads(os.getenv("LA_ADMIN_IDS", "[]"))
 # Lolz API Configuration
 LOLZ_CLIENT_ID = os.getenv("LOLZ_CLIENT_ID")
 LOLZ_CLIENT_SECRET = os.getenv("LOLZ_CLIENT_SECRET")
-LOLZ_API_URL = "https://api.lolz.guru/market"
+LOLZ_API_URL = "https://api.lzt.market"
 
 # Proxy settings
 PROXY_HOST = os.getenv("PROXY_HOST")
