@@ -1,4 +1,3 @@
-
 import asyncio
 import requests
 import random
@@ -6,44 +5,79 @@ import time
 import re
 import string
 import os
-import psutil
 from colorama import Fore, Style, init
 from playwright.async_api import async_playwright, Playwright, BrowserContext
 import urllib.parse
 import json
-from twocaptcha import TwoCaptcha  # Для автоматического решения CAPTCHA
+import logging
+import sys
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Инициализация colorama для цветного вывода
 init(autoreset=True)
 
 # ========== КОНФИГУРАЦИЯ ==========
 FIRSTMAIL_API_KEY = "40512629-2f17-4aa9-8cc9-cf12d0fc53c0"
-TWOCAPTCHA_API_KEY = "ВАШ_КЛЮЧ_2CAPTCHA"  # Замени на свой ключ 2Captcha
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-]
 MAX_RETRIES = 3
 RETRY_DELAY = 60
 CHECKBOX_COORDINATES = (784, 609)  # Настрой координаты под свое разрешение экрана
-CHROME_EXECUTABLE_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"  # Путь к твоему Chrome
 
-async def kill_browser_processes():
-    """Убиваем все процессы Chrome перед новым запуском"""
+# Dolphin Anty конфигурация
+PROFILE_ID = "653525242"  # Из твоего тестового кода
+API_BASE_URL = "http://localhost:3001/v1.0/browser_profiles"
+API_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiNGExY2RhNmYxYWE0MTQwMjY4NDJhZmI0ZGE1OTY1YzQzM2M2MmEzZmY0NDUzOWVjM2QzZjFkZjE3ZDI5Yzg1N2U5OTg1NmQ5MzI3MDhkOGMiLCJpYXQiOjE3NTYyMDE5NDUuNDQ1OTgxLCJuYmYiOjE3NTYyMDE5NDUuNDQ1OTg1LCJleHAiOjE3ODc3Mzc5NDUuNDM2NDQxLCJzdWIiOiIzMDE2NDI0Iiwic2NvcGVzIjpbXSwidGVhbV9pZCI6Mjk0NTA2MywidGVhbV9wbGFuIjoiZnJlZSIsInRlYW1fcGxhbl9leHBpcmF0aW9uIjoxNzA0ODc4MjY3fQ.q1cQsnqQh1_p1UO1Ix8ozOxlFsKzvLzIOKel3xTkKCghSx8jtIxZIz5H_quxto4YzLDMdWQuU6oUliNZhb3L59O8iBDMnAEvnaYky1PXGTuoLYiSzdrIsDMDIdNS8Q3jCRhhNXzJL-CAd0TaBTvrMopiCkoK6CnXgxJVM8NwqoA8Sf4zQ2Pl_ya7Zzy8xGzr0aKPi6i48F2CsM5N0sLpY0xNkWcN-HIK9Wi8M3bRQp74GK-XqtMbhHwKVFXofzLkmpXNs-_41TYFnPlGDxI1QuUiH49fITv3p9BdU9yk0WeiiYwqxxczdk7pPFqkxzUp6CrGzkst7bQu8o3Alqhwftq9dTryA1uJCu5-xWuqe-g9uA3V-vQwN3lZn_zDBI4i9YLxiqyH5yRerLRuclgrtHEoUmqofHNqZVNnY_XtHvOEowtT5RqygHcI-L736GLWe_WIuLwI2CeHUz41zLr0fVfKpBl2pQFSGSkIZJcjQJ9Mq5lLhVDz7dtuw5s4N46Ha-2aljzC9ApwTsAUhW6hR2ucj-zHe7SWy4i8urs-lNoBzGEC02ChIe7trrCdHtRyqW46JC6WX4rO2WXvqFkZW5gW5Ngk7VzUDrXe08bWhYGL6KmJ6LGd3NQ1BanAmGm2WLnOPtiZBDWfF5JP9Te0WW1XG1VMSS_uKc1Tn3ZhRCs"
+
+async def start_dolphin_profile():
+    """Запуск профиля Dolphin Anty через API"""
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    url = f"{API_BASE_URL}/{PROFILE_ID}/start?automation=1&headless=false"
+    logger.info(f"Попытка запуска профиля: {url}")
     try:
-        browser_processes = ['chrome.exe', 'msedge.exe']
-        for proc in psutil.process_iter(['name']):
-            if proc.info['name'] and any(name in proc.info['name'].lower() for name in browser_processes):
-                try:
-                    proc.kill()
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    print(f"Ошибка при завершении процесса {proc.info['name']}: {e}")
-        await asyncio.sleep(2)
+        response = requests.get(url, headers=headers, timeout=15)
+        logger.info(f"Статус ответа: {response.status_code}")
+        logger.info(f"Текст ответа: {response.text}")
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                logger.info(f"Данные ответа: {data}")
+                return True
+            except ValueError:
+                logger.info("Ответ не содержит JSON, продолжаем...")
+                return True
+        else:
+            logger.info(f"Ошибка запуска профиля: {response.text} (код: {response.status_code}), продолжаем...")
+            return True
+    except requests.exceptions.ConnectionError:
+        logger.info("Не удалось подключиться к серверу, продолжаем...")
+        return True
+    except requests.exceptions.Timeout:
+        logger.info("Таймаут запроса, продолжаем...")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.info(f"Ошибка запроса: {e}, продолжаем...")
+        return True
+
+async def stop_dolphin_profile():
+    """Остановка профиля Dolphin Anty через API"""
+    url = f"{API_BASE_URL}/{PROFILE_ID}/stop"
+    headers = {"Authorization": f"Bearer {API_TOKEN}"}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        logger.info(f"Статус ответа остановки: {response.status_code}")
+        logger.info(f"Текст ответа остановки: {response.text}")
+        if response.status_code == 200:
+            logger.info("Профиль успешно остановлен")
     except Exception as e:
-        print(f"Ошибка в kill_browser_processes: {e}")
+        logger.info(f"Ошибка при остановке профиля: {e}, продолжаем...")
 
 class TikTokAutoRegister:
     def __init__(self, email: str, mail_pass: str):
@@ -55,7 +89,6 @@ class TikTokAutoRegister:
         self.context: BrowserContext = None
         self.page = None
         self.is_registered = False
-        self.user_agent = random.choice(USER_AGENTS)
 
     def log(self, message: str, color=Fore.WHITE):
         """Логирование сообщений с цветом"""
@@ -78,115 +111,39 @@ class TikTokAutoRegister:
         return ''.join(password)
 
     async def setup_browser(self, playwright: Playwright):
-        """Настройка Playwright с использованием установленного Google Chrome"""
-        await kill_browser_processes()
+        """Настройка браузера через Playwright"""
         try:
-            browser = await playwright.chromium.launch(
-                executable_path=CHROME_EXECUTABLE_PATH,  # Используем установленный Chrome
-                headless=False,  # Видимый режим
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    f'--user-agent={self.user_agent}',
-                    '--disable-extensions',  # Отключаем расширения для чистоты
-                    '--start-maximized'  # Запускаем в развернутом окне
-                ]
-            )
-            context = await browser.new_context(
-                user_agent=self.user_agent,
-                viewport={'width': 1920, 'height': 1080},
-                locale='en-US',
-                timezone_id='America/New_York',
-                java_script_enabled=True,
-                bypass_csp=True,
-                permissions=['geolocation'],
-                screen={'width': 1920, 'height': 1080},
-                device_scale_factor=1
-            )
-            # Усиливаем антидетект
-            await context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-                Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
-                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-                Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-                Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-                Object.defineProperty(window, 'outerWidth', { get: () => 1920 });
-                Object.defineProperty(window, 'outerHeight', { get: () => 1080 });
-                const getParameter = WebGLRenderingContext.prototype.getParameter;
-                WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    if (parameter === 37445) return 'Google Inc.';
-                    if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, Direct3D11)';
-                    return getParameter.apply(this, arguments);
-                };
-                const ctx = HTMLCanvasElement.prototype.getContext;
-                HTMLCanvasElement.prototype.getContext = function(type) {
-                    const context = ctx.apply(this, arguments);
-                    if (type === '2d') {
-                        const getImageData = context.getImageData;
-                        context.getImageData = function(...args) {
-                            const data = getImageData.apply(this, args);
-                            const pixels = data.data;
-                            for (let i = 0; i < pixels.length; i += 4) {
-                                pixels[i] = pixels[i] ^ (Math.random() * 2);
-                                pixels[i + 1] = pixels[i + 1] ^ (Math.random() * 2);
-                                pixels[i + 2] = pixels[i + 2] ^ (Math.random() * 2);
-                            }
-                            return data;
-                        };
-                    }
-                    return context;
-                };
-            """)
-            self.context = context
-            self.page = await context.new_page()
-            await self.page.route('**/*', self.log_network)
-            await self.clean_browser_data()
-            self.log("Браузер настроен (Google Chrome)", Fore.GREEN)
+            # Пытаемся запустить профиль через API
+            await start_dolphin_profile()
+            # Используем локальный запуск, так как CDP не работает на бесплатном тарифе
+            browser = await playwright.chromium.launch(headless=False)
+            self.context = await browser.new_context()
+            self.page = await self.context.new_page()
+            self.log("Браузер настроен", Fore.GREEN)
             return True
         except Exception as e:
-            self.log(f"Ошибка настройки браузера: {e}", Fore.RED)
-            return False
-
-    async def log_network(self, route):
-        """Логирование сетевых запросов и ответов"""
-        try:
-            response = await route.fetch()
-            status = response.status
-            url = route.request.url
-            self.log(f"Запрос: {url} | Статус: {status}", Fore.YELLOW)
-            if status in [502, 429]:
-                self.log(f"Ошибка {status} на {url}", Fore.RED)
-            await route.continue_()
-        except Exception as e:
-            self.log(f"Ошибка перехвата сети: {e}", Fore.RED)
-            await route.continue_()
-
-    async def clean_browser_data(self):
-        """Очистка куки, кэша, локального и сессионного хранилища"""
-        try:
-            await self.context.clear_cookies()
-            await self.context.clear_permissions()
-            await self.page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
-            self.log("Данные браузера очищены (куки, кэш, хранилища)", Fore.GREEN)
-        except Exception as e:
-            self.log(f"Ошибка очистки данных браузера: {e}", Fore.RED)
+            self.log(f"Ошибка настройки браузера: {e}, пробуем локальный запуск", Fore.YELLOW)
+            try:
+                browser = await playwright.chromium.launch(headless=False)
+                self.context = await browser.new_context()
+                self.page = await self.context.new_page()
+                self.log("Переключено на локальный запуск браузера", Fore.YELLOW)
+                return True
+            except Exception as e2:
+                self.log(f"Критическая ошибка настройки браузера: {e2}", Fore.YELLOW)
+                return False
 
     async def cleanup(self):
         """Очистка ресурсов после работы"""
         try:
-            if self.page:
+            if self.page and not await self.page.is_closed():
                 await self.page.close()
             if self.context:
                 await self.context.close()
         except Exception as e:
-            self.log(f"Ошибка очистки контекста браузера: {e}", Fore.RED)
+            self.log(f"Ошибка очистки контекста браузера: {e}", Fore.YELLOW)
         finally:
-            await kill_browser_processes()
+            await stop_dolphin_profile()
 
     async def get_firstmail_code(self, max_attempts=12, delay=10) -> str | None:
         """Получение кода верификации от Firstmail"""
@@ -195,7 +152,7 @@ class TikTokAutoRegister:
             encoded_email = urllib.parse.quote(self.email)
             encoded_password = urllib.parse.quote(self.mail_pass)
             url = f"https://api.firstmail.ltd/v1/market/get/message?username={encoded_email}&password={encoded_password}"
-            headers = {"accept": "application/json", "X-API-KEY": FIRSTMAIL_API_KEY, "User-Agent": self.user_agent}
+            headers = {"accept": "application/json", "X-API-KEY": FIRSTMAIL_API_KEY}
             for attempt in range(max_attempts):
                 try:
                     response = requests.get(url, headers=headers, timeout=35)
@@ -204,7 +161,7 @@ class TikTokAutoRegister:
                             messages = response.json()
                             self.log(f"Ответ API: {json.dumps(messages, indent=2)}", Fore.YELLOW)
                         except ValueError as e:
-                            self.log(f"Некорректный JSON: {response.text}", Fore.RED)
+                            self.log(f"Некорректный JSON: {response.text}", Fore.YELLOW)
                             await asyncio.sleep(delay)
                             continue
                         msg_body = ''
@@ -219,9 +176,9 @@ class TikTokAutoRegister:
                             if ('TikTok' in from_field or 'tiktok' in from_field.lower() or
                                 'TikTok' in subject or 'tiktok' in subject.lower()):
                                 is_from_tiktok = True
-                            msg_body = (messages.get('message', '') or messages.get('body', '') or 
-                                       messages.get('text', '') or messages.get('content', '') or 
-                                       messages.get('html', ''))
+                            msg_body = (messages.get('message', '') or messages.get('body', '') or
+                                        messages.get('text', '') or messages.get('content', '') or
+                                        messages.get('html', ''))
                         elif isinstance(messages, list):
                             messages.sort(key=lambda x: x.get('date', ''), reverse=True)
                             for msg in messages:
@@ -229,9 +186,9 @@ class TikTokAutoRegister:
                                 subject = msg.get('subject', '')
                                 if ('TikTok' in from_field or 'tiktok' in from_field.lower() or
                                     'TikTok' in subject or 'tiktok' in subject.lower()):
-                                    msg_body = (msg.get('message', '') or msg.get('body', '') or 
-                                               msg.get('text', '') or msg.get('content', '') or 
-                                               msg.get('html', ''))
+                                    msg_body = (msg.get('message', '') or msg.get('body', '') or
+                                                msg.get('text', '') or msg.get('content', '') or
+                                                msg.get('html', ''))
                                     is_from_tiktok = True
                                     break
                         if is_from_tiktok and msg_body:
@@ -244,23 +201,26 @@ class TikTokAutoRegister:
                         self.log(f"Попытка {attempt + 1}/{max_attempts}: код не найден, ждем {delay} сек...", Fore.YELLOW)
                         await asyncio.sleep(delay)
                     else:
-                        self.log(f"Ошибка API, статус: {response.status_code}, ответ: {response.text}", Fore.RED)
+                        self.log(f"Ошибка API, статус: {response.status_code}, ответ: {response.text}", Fore.YELLOW)
                         await asyncio.sleep(delay)
                 except requests.exceptions.RequestException as e:
-                    self.log(f"Ошибка запроса к Firstmail (попытка {attempt + 1}): {e}", Fore.RED)
+                    self.log(f"Ошибка запроса к Firstmail (попытка {attempt + 1}): {e}", Fore.YELLOW)
                     await asyncio.sleep(delay)
                 except Exception as e:
-                    self.log(f"Неожиданная ошибка (попытка {attempt + 1}): {e}", Fore.RED)
+                    self.log(f"Неожиданная ошибка (попытка {attempt + 1}): {e}", Fore.YELLOW)
                     await asyncio.sleep(delay)
-            self.log("Код не найден в письмах после всех попыток", Fore.RED)
+            self.log("Код не найден в письмах после всех попыток", Fore.YELLOW)
             return None
         except Exception as e:
-            self.log(f"Критическая ошибка Firstmail: {e}", Fore.RED)
+            self.log(f"Критическая ошибка Firstmail: {e}", Fore.YELLOW)
             return None
 
     async def human_type(self, selector: str, text: str):
         """Эмуляция человеческого ввода текста с рандомными задержками"""
         try:
+            if await self.page.is_closed():
+                self.log("Страница закрыта, попытка ввода текста невозможна", Fore.YELLOW)
+                return
             element = await self.page.wait_for_selector(selector, timeout=15000)
             await element.click()
             await self.page.mouse.move(random.randint(100, 500), random.randint(100, 500), steps=10)
@@ -271,12 +231,18 @@ class TikTokAutoRegister:
                 if random.random() < 0.1:
                     await asyncio.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
-            self.log(f"Ошибка в human_type: {e}", Fore.RED)
-            await self.page.evaluate(f"""document.querySelector('{selector}').value = '{text.replace("'", "\\'")}'""")
+            self.log(f"Ошибка в human_type: {e}", Fore.YELLOW)
+            try:
+                await self.page.evaluate(f"""document.querySelector('{selector}').value = '{text.replace("'", "\\'")}'""")
+            except Exception as e2:
+                self.log(f"Ошибка резервного ввода: {e2}", Fore.YELLOW)
 
     async def safe_click(self, selector: str, description: str = ""):
-        """Безопасный клик по элементу с обработкой ошибок и рандомными задержками"""
+        """Безопасный клик по элементу с рандомными задержками"""
         try:
+            if await self.page.is_closed():
+                self.log("Страница закрыта, клик невозможен", Fore.YELLOW)
+                return False
             element = await self.page.wait_for_selector(selector, timeout=25000)
             await self.page.evaluate("el => el.scrollIntoView({block: 'center'})", element)
             await asyncio.sleep(random.uniform(0.5, 1.0))
@@ -288,17 +254,20 @@ class TikTokAutoRegister:
             return True
         except Exception as e:
             if description:
-                self.log(f"Ошибка клика на {description}: {e}", Fore.RED)
+                self.log(f"Ошибка клика на {description}: {e}", Fore.YELLOW)
             try:
                 await self.page.evaluate(f"document.querySelector('{selector}').click()")
                 return True
             except Exception as e2:
-                self.log(f"Вторая ошибка клика: {e2}", Fore.RED)
+                self.log(f"Вторая ошибка клика: {e2}", Fore.YELLOW)
                 return False
 
     async def click_by_coordinates(self, x: int, y: int, description: str = ""):
         """Клик по координатам с рандомными задержками"""
         try:
+            if await self.page.is_closed():
+                self.log("Страница закрыта, клик невозможен", Fore.YELLOW)
+                return False
             await self.page.mouse.move(x, y, steps=random.randint(5, 15))
             await asyncio.sleep(random.uniform(0.3, 0.7))
             await self.page.mouse.click(x, y)
@@ -308,14 +277,17 @@ class TikTokAutoRegister:
             return True
         except Exception as e:
             if description:
-                self.log(f"Ошибка клика по координатам {description}: {e}", Fore.RED)
+                self.log(f"Ошибка клика по координатам {description}: {e}", Fore.YELLOW)
             return False
 
     async def click_checkbox_combined(self):
         """Комбинированный метод для клика по чекбоксу согласия"""
-        if await self.click_by_coordinates(*CHECKBOX_COORDINATES, "Чекбокс по координатам"):
-            return True
         try:
+            if await self.click_by_coordinates(*CHECKBOX_COORDINATES, "Чекбокс по координатам"):
+                return True
+            if await self.page.is_closed():
+                self.log("Страница закрыта, клик невозможен", Fore.YELLOW)
+                return False
             text_elements = await self.page.query_selector_all(
                 '//*[contains(text(), "Get trending content") or contains(text(), "newsletters") or contains(text(), "promotions")]'
             )
@@ -328,12 +300,15 @@ class TikTokAutoRegister:
                         if await self.click_by_coordinates(int(x), int(y), "Чекбокс рядом с текстом"):
                             return True
         except Exception as e:
-            self.log(f"Ошибка в click_checkbox_combined: {e}", Fore.RED)
+            self.log(f"Ошибка в click_checkbox_combined: {e}", Fore.YELLOW)
         return False
 
     async def select_date_with_precise_selectors(self):
         """Заполнение даты рождения с точными селекторами"""
         try:
+            if await self.page.is_closed():
+                self.log("Страница закрыта, выбор даты невозможен", Fore.YELLOW)
+                return False
             await self.page.wait_for_selector('//div[contains(@class, "tiktok-1leicpq-DivSelectLabel")]', timeout=15000)
             date_dropdowns = await self.page.query_selector_all('//div[contains(@class, "tiktok-1leicpq-DivSelectLabel")]')
             self.log(f"Найдено выпадающих списков для даты: {len(date_dropdowns)}", Fore.YELLOW)
@@ -379,49 +354,9 @@ class TikTokAutoRegister:
                         self.log("Год выбран", Fore.GREEN)
                 return True
         except Exception as e:
-            self.log(f"Ошибка заполнения даты: {e}", Fore.RED)
+            self.log(f"Ошибка заполнения даты: {e}", Fore.YELLOW)
             return False
         return False
-
-    async def check_captcha(self):
-        """Проверка наличия CAPTCHA"""
-        captcha_selectors = [
-            'div.captcha_verify_container',
-            'iframe[src*="captcha"]',
-            'div[id*="captcha"]',
-            'div[class*="verify"]'
-        ]
-        for selector in captcha_selectors:
-            try:
-                await self.page.wait_for_selector(selector, timeout=5000)
-                self.log("Обнаружена CAPTCHA!", Fore.RED)
-                return True
-            except:
-                continue
-        return False
-
-    async def solve_captcha(self):
-        """Автоматическое решение CAPTCHA через 2Captcha"""
-        try:
-            solver = TwoCaptcha(TWOCAPTCHA_API_KEY)
-            # Получаем sitekey для CAPTCHA
-            sitekey = await self.page.evaluate("document.querySelector('iframe[src*=\"captcha\"]')?.src.match(/k=([^&]+)/)?.[1] || ''")
-            if not sitekey:
-                self.log("Sitekey для CAPTCHA не найден, попробуем вручную", Fore.RED)
-                return False
-            self.log(f"Sitekey CAPTCHA: {sitekey}", Fore.YELLOW)
-            result = solver.recaptcha(sitekey=sitekey, url='https://www.tiktok.com/signup')
-            code = result['code']
-            self.log(f"CAPTCHA решена: {code}", Fore.GREEN)
-            await self.page.evaluate(f"""
-                document.querySelector('textarea[id="g-recaptcha-response"]').value = '{code}';
-                window.___grecaptcha_cfg.clients[0].callback('{code}');
-            """)
-            await asyncio.sleep(random.uniform(2, 4))
-            return True
-        except Exception as e:
-            self.log(f"Ошибка решения CAPTCHA: {e}", Fore.RED)
-            return False
 
     async def register(self):
         """Процесс регистрации аккаунта TikTok"""
@@ -429,47 +364,46 @@ class TikTokAutoRegister:
             if not await self.setup_browser(playwright):
                 return False
             try:
+                await self.page.wait_for_load_state('domcontentloaded', timeout=60000)
                 await self.page.goto('https://www.tiktok.com/signup', timeout=60000)
                 current_url = self.page.url
                 self.log(f"Перешли на URL: {current_url}", Fore.GREEN)
                 page_content = await self.page.content()
                 if '502 Bad Gateway' in page_content:
-                    self.log("Обнаружена ошибка 502 Bad Gateway", Fore.RED)
-                    with open(f"502_error_{self.email}.html", "w", encoding="utf-8") as f:
-                        f.write(page_content)
-                    await self.page.screenshot(path=f"502_screenshot_{self.email}.png")
+                    self.log("Обнаружена ошибка 502 Bad Gateway", Fore.YELLOW)
+                    try:
+                        with open(f"502_error_{self.email}.html", "w", encoding="utf-8") as f:
+                            f.write(page_content)
+                        await self.page.screenshot(path=f"502_screenshot_{self.email}.png")
+                    except Exception:
+                        pass
                     return False
                 await asyncio.sleep(random.uniform(5, 7))
-
                 phone_email_selector = '//div[contains(text(), "Use phone or email") or contains(text(), "Введите телефон или эл. почту") or @style="font-size: 15px;"]'
                 if not await self.safe_click(phone_email_selector, "Использовать телефон или email"):
-                    self.log("Не удалось кликнуть 'Использовать телефон или email'", Fore.RED)
-                    await self.page.screenshot(path=f"phone_email_error_{self.email}.png")
+                    self.log("Не удалось кликнуть 'Использовать телефон или email'", Fore.YELLOW)
+                    try:
+                        await self.page.screenshot(path=f"phone_email_error_{self.email}.png")
+                    except Exception:
+                        pass
                     return False
                 await asyncio.sleep(random.uniform(5, 7))
-
                 email_signup_selector = '//a[contains(@href, "/signup/phone-or-email/email") or contains(text(), "Sign up with email") or contains(text(), "Зарегистрироваться через эл. почту") or @class="ep888o80 tiktok-1mgli76-ALink-StyledLink epl6mg0"]'
                 if not await self.safe_click(email_signup_selector, "Зарегистрироваться через email"):
-                    self.log("Не удалось кликнуть 'Зарегистрироваться через email'", Fore.RED)
-                    await self.page.screenshot(path=f"email_signup_error_{self.email}.png")
+                    self.log("Не удалось кликнуть 'Зарегистрироваться через email'", Fore.YELLOW)
+                    try:
+                        await self.page.screenshot(path=f"email_signup_error_{self.email}.png")
+                    except Exception:
+                        pass
                     return False
                 await asyncio.sleep(random.uniform(5, 7))
-
-                if await self.check_captcha():
-                    self.log("Обнаружена CAPTCHA, пытаемся решить автоматически...", Fore.YELLOW)
-                    if not await self.solve_captcha():
-                        self.log("Не удалось решить CAPTCHA автоматически, решите вручную и нажмите Enter...", Fore.RED)
-                        input("Нажмите Enter после решения CAPTCHA...")
-                    else:
-                        self.log("CAPTCHA решена автоматически", Fore.GREEN)
-
                 for attempt in range(MAX_RETRIES):
                     try:
                         await self.page.wait_for_selector('body', timeout=25000)
                         await asyncio.sleep(random.uniform(3, 5))
                         self.log("Заполняем дату рождения...", Fore.YELLOW)
                         if not await self.select_date_with_precise_selectors():
-                            self.log("Ошибка заполнения даты", Fore.RED)
+                            self.log("Ошибка заполнения даты", Fore.YELLOW)
                             continue
                         await asyncio.sleep(random.uniform(2, 4))
                         self.log("Заполняем email...", Fore.YELLOW)
@@ -493,7 +427,7 @@ class TikTokAutoRegister:
                         await asyncio.sleep(random.uniform(10, 15))
                         code = await self.get_firstmail_code()
                         if not code:
-                            self.log("Не удалось получить код из почты", Fore.RED)
+                            self.log("Не удалось получить код из почты", Fore.YELLOW)
                             continue
                         self.log("Вводим код верификации...", Fore.YELLOW)
                         code_selector = '//input[contains(@placeholder, "code")] | //input[@inputmode="numeric"] | //input[contains(@name, "code")]'
@@ -521,11 +455,17 @@ class TikTokAutoRegister:
                             return True
                         else:
                             self.log(f"Возможная ошибка регистрации, URL: {current_url}", Fore.YELLOW)
-                            await self.page.screenshot(path=f"debug_{self.email}.png")
+                            try:
+                                await self.page.screenshot(path=f"debug_{self.email}.png")
+                            except Exception:
+                                pass
                             continue
                     except Exception as e:
-                        self.log(f"Ошибка на попытке {attempt + 1}: {e}", Fore.RED)
-                        await self.page.screenshot(path=f"error_{self.email}_attempt_{attempt}.png")
+                        self.log(f"Ошибка на попытке {attempt + 1}: {e}", Fore.YELLOW)
+                        try:
+                            await self.page.screenshot(path=f"error_{self.email}_attempt_{attempt}.png")
+                        except Exception:
+                            pass
                         if attempt < MAX_RETRIES - 1:
                             self.log(f"Ждем {RETRY_DELAY} секунд перед повторной попыткой...", Fore.YELLOW)
                             await self.page.reload()
@@ -533,19 +473,21 @@ class TikTokAutoRegister:
                         continue
                 return False
             except Exception as e:
-                self.log(f"Критическая ошибка: {e}", Fore.RED)
-                await self.page.screenshot(path=f"critical_error_{self.email}.png")
+                self.log(f"Критическая ошибка: {e}", Fore.YELLOW)
+                try:
+                    await self.page.screenshot(path=f"critical_error_{self.email}.png")
+                except Exception:
+                    pass
                 return False
             finally:
                 await self.cleanup()
 
 async def main():
     """Основная функция для запуска процесса регистрации"""
-    print(Fore.CYAN + "=== TikTok Auto Register (Google Chrome) ===")
+    print(Fore.CYAN + "=== TikTok Auto Register (Dolphin Anty) ===")
     print("Введите данные почты в формате: email:mail_password")
     print("Пароль почты только для API, пароль TikTok генерируется отдельно!")
     print("Введите 'START' для начала")
-    await kill_browser_processes()
     accounts = []
     while True:
         line = input().strip()
@@ -573,7 +515,7 @@ async def main():
         else:
             print(Fore.RED + f"Не удалось зарегистрировать {email}")
         if i < len(accounts) - 1:
-            pause_time = random.randint(60, 120)  # Увеличенная пауза между аккаунтами
+            pause_time = random.randint(60, 120)
             print(Fore.YELLOW + f"Ждем {pause_time} секунд перед следующим аккаунтом...")
             await asyncio.sleep(pause_time)
     if registered_accounts:

