@@ -141,7 +141,7 @@ def process_photo(image_path):
         ).astype(np.uint8)
     
     # Общее легкое размытие всего изображения для единообразия
-    result_image = cv2.GaussianBlur(result_image, (15, 15), 0)
+    result_image = cv2.GaussianBlur(result_image, (85, 85), 0)
     
     # Коррекция цвета для естественности
     result_image = cv2.convertScaleAbs(result_image, alpha=1.05, beta=5)
