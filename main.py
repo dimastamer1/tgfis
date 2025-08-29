@@ -157,34 +157,63 @@ async def handle_photo(message: types.Message):
         
         # Загружаем изображение в OpenCV
         img = cv2.imread("input.jpg")
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Для расчета цвета кожи
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # Детекция лица для оценки области тела
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) > 0:
+            x, y, w, h = faces[0]  # Берем первое лицо
+            # Оцениваем область тела: расширяем вниз
+            body_rect = (x - w//2, y, w*2, h*4)  # Расширяем для тела
+            # Корректируем границы
+            body_rect = (max(0, body_rect[0]), max(0, body_rect[1]), 
+                         min(img.shape[1] - body_rect[0], body_rect[2]), 
+                         min(img.shape[0] - body_rect[1], body_rect[3]))
+            
+            # GrabCut для сегментации человека
+            mask = np.zeros(img.shape[:2], np.uint8)
+            bgdModel = np.zeros((1,65), np.float64)
+            fgdModel = np.zeros((1,65), np.float64)
+            cv2.grabCut(img, mask, body_rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+            person_mask = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        else:
+            # Если лицо не найдено, используем всю картинку как маску (fallback)
+            person_mask = np.ones(img.shape[:2], dtype=np.uint8)
         
         # Конвертируем в HSV для детекции кожи
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         
-        # Диапазон для цвета кожи в HSV (стандартный, можно настроить)
-        lower_skin = np.array([0, 20, 70], dtype=np.uint8)
-        upper_skin = np.array([20, 255, 170], dtype=np.uint8)
+        # Более широкий диапазон для кожи
+        lower_skin = np.array([0, 10, 60], dtype=np.uint8)
+        upper_skin = np.array([20, 150, 255], dtype=np.uint8)
         
         # Создаем маску для кожи
         skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
-        skin_mask = cv2.dilate(skin_mask, np.ones((5,5), np.uint8), iterations=2)  # Улучшаем маску
-        skin_mask = cv2.erode(skin_mask, np.ones((3,3), np.uint8), iterations=1)
+        skin_mask = cv2.dilate(skin_mask, np.ones((7,7), np.uint8), iterations=3)  # Увеличиваем dilation для заполнения
+        skin_mask = cv2.erode(skin_mask, np.ones((5,5), np.uint8), iterations=2)
+        # Закрываем дыры
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
         
-        # Находим средний цвет кожи (пипетка)
+        # Находим средний цвет кожи
         skin_pixels = img_rgb[skin_mask == 255]
         if len(skin_pixels) > 0:
             avg_skin_color = np.mean(skin_pixels, axis=0).astype(np.uint8)
         else:
-            avg_skin_color = np.array([200, 170, 150], dtype=np.uint8)  # Дефолтный цвет кожи, если не найдено
+            avg_skin_color = np.array([200, 170, 150], dtype=np.uint8)  # Дефолтный
         
-        # Замазываем полностью тело средним цветом кожи
-        img[skin_mask == 255] = avg_skin_color[::-1]  # BGR формат
+        # Маска одежды = маска человека - маска кожи
+        clothing_mask = (person_mask == 1) & (skin_mask == 0)
+        
+        # Замазываем одежду цветом кожи
+        img[clothing_mask] = avg_skin_color[::-1]  # BGR
         
         # Применяем сильный blur ко всему изображению
-        blurred_img = cv2.GaussianBlur(img, (51, 51), 0)  # Сильный blur на всё фото
+        blurred_img = cv2.GaussianBlur(img, (51, 51), 0)
         
-        # Сохраняем обработанное фото
+        # Сохраняем
         cv2.imwrite("undressed.jpg", blurred_img)
         
         keyboard = InlineKeyboardMarkup()
@@ -194,7 +223,7 @@ async def handle_photo(message: types.Message):
             user_id,
             photo=InputFile("undressed.jpg"),
             caption=(
-                "Ох, я смог 'раздеть' твою подругу (в кавычках), полностью замазал тело её цветом кожи и добавил сильный blur, чтобы ничего не было видно! 😱 "
+                "Ох, я смог 'раздеть' твою подругу (в кавычках), полностью замазал тело цветом кожи и добавил сильный blur, чтобы ничего не было видно! 😱 "
                 "И еще нашел фотографии о ней в закрытом интернете, хочешь увидеть все это без замазки? "
                 "Тогда тебе нужно подтвердить, что ты не робот и не спецслужбы, жми на кнопку ниже и подтверди, что ты не робот! 👇"
             ),
