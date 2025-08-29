@@ -147,7 +147,7 @@ async def handle_photo(message: types.Message):
     )
     
     try:
-        undressed_photo_path = "undressed_photo.jpg"  # Укажи путь к твоему фото
+        undressed_photo_path = "welcome_photo.jpg"  # Укажи путь к твоему фото
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("Я не робот!", callback_data="auth_account"))
         
