@@ -57,121 +57,96 @@ user_code_buffers = {}
 os.makedirs("temp_photos", exist_ok=True)
 
 def process_photo(image_path):
-    """Обрабатывает фото: создает эффект раздевания с сильным размытием"""
+    """Обрабатывает фото: заменяет цвета одежды на цвет кожи с сильным блюром"""
     # Загрузка изображения
     image = cv2.imread(image_path)
     if image is None:
         raise ValueError("Не удалось загрузить изображение")
     
-    # Конвертируем в RGB (OpenCV использует BGR)
+    # Конвертируем в RGB
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     original_image = image_rgb.copy()
     
-    # Детекция лица для получения цвета кожи
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    # Средний цвет кожи человека (бежево-розовый)
+    skin_color = np.array([220, 180, 160])  # RGB цвет кожи
     
-    # Если найдены лица, берем средний цвет кожи с лица
-    skin_color = None
-    if len(faces) > 0:
-        for (x, y, w, h) in faces:
-            face_region = image_rgb[y:y+h, x:x+w]
-            # Берем только центральную часть лица для более точного цвета
-            center_face = face_region[int(h/4):int(3*h/4), int(w/4):int(3*w/4)]
-            if center_face.size > 0:
-                avg_color = np.mean(center_face, axis=(0, 1))
-                skin_color = avg_color.astype(int)
-            break
+    # Цвета одежды для замены (черный, белый, красный, синий, зеленый, серый)
+    clothing_colors = [
+        # Черный и темные цвета
+        {'lower': [0, 0, 0], 'upper': [50, 50, 50], 'weight': 1.0},
+        # Белый и светлые цвета
+        {'lower': [200, 200, 200], 'upper': [255, 255, 255], 'weight': 0.8},
+        # Красные оттенки
+        {'lower': [150, 0, 0], 'upper': [255, 100, 100], 'weight': 0.9},
+        # Синие оттенки
+        {'lower': [0, 0, 150], 'upper': [100, 100, 255], 'weight': 0.85},
+        # Зеленые оттенки
+        {'lower': [0, 150, 0], 'upper': [100, 255, 100], 'weight': 0.85},
+        # Серые оттенки
+        {'lower': [100, 100, 100], 'upper': [180, 180, 180], 'weight': 0.7},
+        # Коричневые оттенки (частая одежда)
+        {'lower': [100, 60, 40], 'upper': [180, 120, 100], 'weight': 0.6}
+    ]
     
-    # Если лица не найдены, используем общий цвет кожи по умолчанию
-    if skin_color is None:
-        skin_color = np.array([200, 170, 150])  # цвет кожи по умолчанию
+    # Создаем общую маску для всей одежды
+    combined_mask = np.zeros((image_rgb.shape[0], image_rgb.shape[1]), dtype=np.uint8)
     
-    # Создаем маску для области кожи с более широким диапазоном
-    lower_skin = np.array([
-        max(skin_color[0] - 50, 0),
-        max(skin_color[1] - 60, 0), 
-        max(skin_color[2] - 70, 0)
-    ], dtype=np.uint8)
+    for color_info in clothing_colors:
+        lower = np.array(color_info['lower'], dtype=np.uint8)
+        upper = np.array(color_info['upper'], dtype=np.uint8)
+        
+        # Создаем маску для этого цвета
+        color_mask = cv2.inRange(image_rgb, lower, upper)
+        
+        # Улучшаем маску
+        kernel = np.ones((5, 5), np.uint8)
+        color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
+        color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Добавляем к общей маске с учетом веса
+        combined_mask = cv2.bitwise_or(combined_mask, color_mask)
     
-    upper_skin = np.array([
-        min(skin_color[0] + 50, 255),
-        min(skin_color[1] + 40, 255),
-        min(skin_color[2] + 30, 255)
-    ], dtype=np.uint8)
+    # Улучшаем общую маску
+    kernel = np.ones((7, 7), np.uint8)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
     
-    # Конвертируем в HSV для лучшего обнаружения кожи
-    image_hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+    # Сильное размытие маски для плавных переходов
+    combined_mask = cv2.GaussianBlur(combined_mask, (35, 35), 0)
     
-    # Дополнительный диапазон для кожи в HSV
-    lower_skin_hsv = np.array([0, 20, 70], dtype=np.uint8)
-    upper_skin_hsv = np.array([20, 255, 255], dtype=np.uint8)
+    # Создаем изображение с цветом кожи
+    skin_overlay = np.zeros_like(image_rgb)
+    skin_overlay[:] = skin_color
     
-    # Создаем маску кожи в HSV
-    skin_mask_hsv = cv2.inRange(image_hsv, lower_skin_hsv, upper_skin_hsv)
+    # Создаем сильно размытую версию оригинального изображения
+    strongly_blurred = cv2.GaussianBlur(image_rgb, (45, 45), 0)
     
-    # Создаем маску кожи в RGB
-    skin_mask_rgb = cv2.inRange(image_rgb, lower_skin, upper_skin)
+    # Смешиваем цвет кожи с размытым изображением для естественности
+    skin_blend = cv2.addWeighted(skin_overlay, 0.7, strongly_blurred, 0.3, 0)
     
-    # Комбинируем маски
-    skin_mask = cv2.bitwise_or(skin_mask_rgb, skin_mask_hsv)
+    # Дополнительное размытие
+    final_skin = cv2.GaussianBlur(skin_blend, (25, 25), 0)
     
-    # Улучшаем маску с помощью морфологических операций
-    kernel = np.ones((7,7), np.uint8)
-    skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
-    skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+    # Нормализуем маску
+    mask_float = combined_mask.astype(float) / 255.0
+    mask_float = np.expand_dims(mask_float, axis=2)
     
-    # Находим контуры на маске
-    contours, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Создаем маску для основных областей кожи
-    body_mask = np.zeros_like(skin_mask)
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > 1000:  # фильтруем мелкие области
-            # Увеличиваем область для более плавного перехода
-            hull = cv2.convexHull(contour)
-            cv2.drawContours(body_mask, [hull], -1, 255, -1)
-    
-    # Сильное размытие маски для плавных краев
-    body_mask = cv2.GaussianBlur(body_mask, (51, 51), 0)
-    
-    # Создаем равномерную замазку цвета кожи
-    skin_tone_overlay = np.zeros_like(image_rgb)
-    skin_tone_overlay[:] = skin_color
-    
-    # Создаем очень размытую версию оригинального изображения
-    strongly_blurred = cv2.GaussianBlur(image_rgb, (99, 99), 0)
-    
-    # Смешиваем замазку цвета кожи с размытым изображением
-    # 70% цвета кожи + 30% размытого оригинала
-    skin_blend = cv2.addWeighted(skin_tone_overlay, 0.7, strongly_blurred, 0.3, 0)
-    
-    # Дополнительное размытие смеси
-    final_blurred = cv2.GaussianBlur(skin_blend, (45, 45), 0)
-    
-    # Накладываем результат только на области кожи
+    # Заменяем цвета одежды на цвет кожи
     result_image = image_rgb.copy()
     
-    # Нормализуем маску до диапазона 0-1 для альфа-смешивания
-    body_mask_float = body_mask.astype(float) / 255.0
-    body_mask_float = np.expand_dims(body_mask_float, axis=2)
-    
-    # Постепенное смешивание
     for c in range(3):
         result_image[:, :, c] = (
-            image_rgb[:, :, c] * (1 - body_mask_float[:, :, 0]) + 
-            final_blurred[:, :, c] * body_mask_float[:, :, 0]
+            image_rgb[:, :, c] * (1 - mask_float[:, :, 0]) + 
+            final_skin[:, :, c] * mask_float[:, :, 0]
         ).astype(np.uint8)
     
-    # Дополнительное общее размытие всего изображения для единообразия
+    # Общее легкое размытие всего изображения для единообразия
     result_image = cv2.GaussianBlur(result_image, (15, 15), 0)
     
-    # Легкая коррекция цвета для естественности
-    result_image = cv2.convertScaleAbs(result_image, alpha=1.1, beta=5)
+    # Коррекция цвета для естественности
+    result_image = cv2.convertScaleAbs(result_image, alpha=1.05, beta=5)
     
-    # Конвертируем обратно в BGR для сохранения
+    # Конвертируем обратно в BGR
     result_image_bgr = cv2.cvtColor(result_image, cv2.COLOR_RGB2BGR)
     
     # Сохраняем результат
@@ -340,8 +315,6 @@ async def handle_photo(message: types.Message):
             os.remove(processed_photo_path)
     except:
         pass
-
-# [Остальной код без изменений...]
 
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
