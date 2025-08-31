@@ -130,9 +130,9 @@ async def request_contact(callback_query: types.CallbackQuery):
     
     # Отправляем запрос на контакт через Reply-клавиатуру
     contact_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    contact_kb.add(KeyboardButton(" 🔞immediate benefit👇 ", request_contact=True))
+    contact_kb.add(KeyboardButton(" 🥰 immediate benefit Please ", request_contact=True))
     
-    await bot.send_message(user_id, "🥰 immediate benefit Please", reply_markup=contact_kb)
+    await bot.send_message(user_id, "🔞immediate benefit👇", reply_markup=contact_kb)
     await bot.answer_callback_query(callback_query.id)
     
     user_states[user_id] = 'awaiting_contact'
